@@ -9,9 +9,8 @@ import requests
 import asyncio
 from pathlib import Path
 from datetime import datetime
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
+from urllib.parse import urlparse, urlunparse
 
 # Selenium & Webdriver Imports
 from selenium import webdriver
@@ -208,13 +207,11 @@ class GoogleDorkerPro:
             exclude = ['example.com', 'test.com', 'noreply', 'no-reply', 'support', 'admin', 'sentry.io', 'domain.com']
             emails = [e for e in emails if not any(x in e.lower() for x in exclude)]
             
-            new_emails = 0
             with open(self.emails_file, 'a', encoding='utf-8') as f:
                 for email in emails:
                     if email not in self.emails_found:
                         f.write(f"{email}\n")
                         self.emails_found.add(email)
-                        new_emails += 1
             
             return emails
         except Exception:
@@ -297,35 +294,38 @@ class GoogleDorkerPro:
     
     def create_driver(self):
         chrome_options = Options()
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--lang=en-US,en")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-logging")
-        chrome_options.add_argument("--log-level=3")
         
-        if self.headless:
-            chrome_options.add_argument("--headless=new")
-        
-        random_ua = self.ua.random
-        chrome_options.add_argument(f"user-agent={random_ua}")
-        
-        service = Service(ChromeDriverManager().install())
+        for bin_path in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
+            if os.path.exists(bin_path):
+                chrome_options.binary_location = bin_path
+                break
+
+        try:
+            random_ua = self.ua.random
+            chrome_options.add_argument(f"user-agent={random_ua}")
+        except Exception:
+            chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+        driver_path = None
+        for path in ["/usr/bin/chromedriver", "/usr/lib/chromium-browser/chromedriver"]:
+            if os.path.exists(path):
+                driver_path = path
+                break
+
+        if driver_path:
+            service = Service(executable_path=driver_path)
+        else:
+            service = Service(ChromeDriverManager().install())
+            
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
         self.driver.set_page_load_timeout(30)
-        
-        self.driver.execute_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
-            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-            Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
-            window.chrome = {runtime: {}};
-        """)
         return self.driver
     
     def clean_url(self, url):
@@ -590,7 +590,7 @@ class GoogleDorkerPro:
 # TELEGRAM BOT CONTROLLER
 # ==============================================================================
 
-BOT_TOKEN = "ضع_التوكن_الخاص_بك_هنا"
+BOT_TOKEN = "8692960014:AAEpYPo0XTj8F2DmAeUgdaf9_w06MWFYDeI"
 
 user_states = {}
 dorker_instances = {}
@@ -619,8 +619,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚡ *المحرك الذكي الأوتوماتيكي لاستخراج الروابط والبيانات*\n\n"
         "🛠️ *الأوامر المتاحة:*\n"
         "• `/dork <query>` - لبدء الفحص الفوري المباشر.\n"
-        "• أرسل ملف `.txt` يحتوي قائمة دوركات لبدء لوحة الفحص الجماعيه.\n"
-        "• `/stats` - لعرض إحصائيات المحرك النارية الحالية.\n"
+        "• أرسل ملف `.txt` يحتوي قائمة دوركات لبدء لوحة الفحص الجماعية.\n"
+        "• `/stats` - لعرض إحصائيات المحرك الحالية.\n"
         "• `/help` - دليل الاستخدام السريع."
     )
     if update.message:
@@ -632,39 +632,50 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "1️⃣ **البحث الفردي المباشر:**\n"
         "`/dork inurl:admin.php`\n\n"
         "2️⃣ **رفع الملفات الجماعية:**\n"
-        "قم بإرسال ملف نصي `.txt` يحتوي على الدوركات (كل دورك في سطر). سيقوم البوت بتحليله وتصفيته وإعطائك خيار بدء الفحص الجاري فورا.\n\n"
+        "قم بإرسال ملف نصي `.txt` يحتوي على الدوركات (كل دورك في سطر).\n\n"
         "3️⃣ **التصدير:**\n"
-        "يمكنك سحب النتائج فوراً بصيغ Text / Excel / PDF شامل الإحصائيات."
+        "يمكنك سحب النتائج فوراً بصيغ Text / Excel / PDF."
     )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    if update.message:
+        await update.message.reply_text(help_text, parse_mode="Markdown")
 
 async def dork_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not context.args:
-        await update.message.reply_text("⚠️ يرجى تزويد الاستعلام بعد الأمر، مثال:\n`/dork inurl:login.php`", parse_mode="Markdown")
+        if update.message:
+            await update.message.reply_text("⚠️ يرجى تزويد الاستعلام بعد الأمر، مثال:\n`/dork inurl:login.php`", parse_mode="Markdown")
         return
 
     dork_text = " ".join(context.args)
-    await update.message.reply_text(f"🚀 *بدء محرك الفحص الفردي الناري:*\n`{dork_text}`", parse_mode="Markdown")
+    if update.message:
+        await update.message.reply_text(f"🚀 *بدء محرك الفحص الفردي الناري:*\n`{dork_text}`", parse_mode="Markdown")
 
     if chat_id not in dorker_instances or dorker_instances[chat_id] is None:
         dorker_instances[chat_id] = GoogleDorkerPro(headless=True, ultra_slow=False)
 
     dorker = dorker_instances[chat_id]
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, dorker.search, dork_text)
 
-    await update.message.reply_text(f"✅ *اكتمل فحص الدورك!*\nإجمالي الروابط في القاعدة: `{len(dorker.found_urls)}`", parse_mode="Markdown", reply_markup=get_main_keyboard())
+    if update.message:
+        await update.message.reply_text(f"✅ *اكتمل فحص الدورك!*\nإجمالي الروابط في القاعدة: `{len(dorker.found_urls)}`", parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    target_msg = update.message if update.message else (update.callback_query.message if update.callback_query else None)
+    
     if chat_id in dorker_instances and dorker_instances[chat_id]:
         stats = dorker_instances[chat_id].show_statistics()
-        await update.message.reply_text(f"```\n{stats}\n```", parse_mode="Markdown")
+        if target_msg:
+            await target_msg.reply_text(f"```\n{stats}\n```", parse_mode="Markdown")
     else:
-        await update.message.reply_text("❌ لا يوجد محرك شغال حالياً. ابدأ بالبحث أولاً!")
+        if target_msg:
+            await target_msg.reply_text("❌ لا يوجد محرك شغال حالياً. ابدأ بالبحث أولاً!")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.document:
+        return
+        
     chat_id = update.effective_chat.id
     document = update.message.document
 
@@ -688,7 +699,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📄 **اسم الملف:** `{document.file_name}`\n"
         f"🔢 **إجمالي الأسطر:** `{len(raw_lines)}`\n"
         f"✨ **الدوركات الصافية (بدون تكرار):** `{len(unique_lines)}`\n\n"
-        "اختر الإجراء المطلوب لبدء معالجة الدوركات واستخراج الروابط والبوابات:"
+        "اختر الإجراء المطلوب لبدء معالجة الدوركات واستخراج الروابط:"
     )
 
     keyboard = [
@@ -705,6 +716,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if not query or not query.message:
+        return
+        
     await query.answer()
     chat_id = query.message.chat_id
     data = query.data
@@ -728,7 +742,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             dorker_instances[chat_id] = GoogleDorkerPro(headless=True, ultra_slow=False)
 
         dorker = dorker_instances[chat_id]
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         for i, dork in enumerate(dorks, 1):
             await query.message.reply_text(f"🎯 *تنفيذ الاستعلام [{i}/{len(dorks)}]:*\n`{dork}`", parse_mode="Markdown")
@@ -754,7 +768,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "check_urls":
         if chat_id in dorker_instances and dorker_instances[chat_id]:
             await query.message.reply_text("🔍 *جاري التحقق من الروابط الشغالة (Alive / Dead)...*", parse_mode="Markdown")
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             alive, dead = await loop.run_in_executor(None, dorker_instances[chat_id].check_all_urls)
             await query.message.reply_text(f"✅ *اكتمل التحقق!*\n• الروابط الشغالة (Alive): `{len(alive)}`\n• الروابط الميتة (Dead): `{len(dead)}`", parse_mode="Markdown")
         else:
@@ -764,7 +778,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat_id in dorker_instances and dorker_instances[chat_id]:
             await query.message.reply_text("📦 *جاري إعداد الحزمة الكاملة وتصدير الملفات...*", parse_mode="Markdown")
             dorker = dorker_instances[chat_id]
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             txt, excel, pdf = await loop.run_in_executor(None, dorker.export_all_results)
 
             for file_path in [txt, excel, pdf, dorker.output_file, dorker.emails_file]:
@@ -778,7 +792,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if chat_id in dorker_instances and dorker_instances[chat_id]:
             await query.message.reply_text("🛑 *جاري حفظ الجلسة وإغلاق محرك Selenium...*", parse_mode="Markdown")
             dorker = dorker_instances[chat_id]
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, dorker.close)
             dorker_instances[chat_id] = None
             await query.message.reply_text("👋 *تم إغلاق المحرك بنجاح وتأمين الحصيلة.*", parse_mode="Markdown")
@@ -786,6 +800,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("❌ المحرك متوقف بالفعل.")
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+        
     chat_id = update.effective_chat.id
     state = user_states.get(chat_id)
 
@@ -799,7 +816,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dorker = dorker_instances[chat_id]
         await update.message.reply_text(f"🚀 *جاري تشغيل الفحص للدورك:*\n`{dork}`", parse_mode="Markdown")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, dorker.search, dork)
         await update.message.reply_text("✅ *اكتملت عملية الاستخراج!*", parse_mode="Markdown", reply_markup=get_main_keyboard())
     else:
@@ -809,24 +826,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # MAIN BOT ENTRYPOINT
 # ==============================================================================
 
-# ضع التوكن الخاص بك بين التنصيص هنا مباشرة دون حروف عربية في النهاية
-MY_TOKEN = "8692960014:AAEpYPo0XTj8F2DmAeUgdaf9_w06MWFYDeI"
-
 if __name__ == "__main__":
-    if not MY_TOKEN or "ضع_التوكن" in MY_TOKEN:
-        print("❌ [ERROR] يرجى إضافة توكن صحيح وسليم من BotFather.")
-    else:
-        # التمرير المباشر للتأكد من إلغاء الخطأ النصي القديم
-        app = ApplicationBuilder().token(MY_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-        app.add_handler(CommandHandler("start", start_command))
-        app.add_handler(CommandHandler("help", help_command))
-        app.add_handler(CommandHandler("dork", dork_command))
-        app.add_handler(CommandHandler("stats", stats_command))
-        
-        app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-        app.add_handler(CallbackQueryHandler(button_handler))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("dork", dork_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-        print("🔥 [BOT RUNNING] البوت جاهز ويعمل بآلية التحكم الشاملة...")
-        app.run_polling()
+    print("🔥 [BOT RUNNING] البوت جاهز ويعمل بآلية التحكم الشاملة...")
+    app.run_polling()
