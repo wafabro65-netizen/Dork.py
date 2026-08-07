@@ -7,6 +7,7 @@ import sqlite3
 import hashlib
 import requests
 import asyncio
+import logging
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -33,6 +34,13 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+
+# Logging Setup
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # CLASS: GoogleDorkerPro (المحرك الرئيسي المطور)
@@ -301,6 +309,8 @@ class GoogleDorkerPro:
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--lang=en-US,en")
+        chrome_options.add_argument("--remote-debugging-port=9222")
+        chrome_options.add_argument("--disable-setuid-sandbox")
         
         for bin_path in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
             if os.path.exists(bin_path):
@@ -823,20 +833,49 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("يرجى اختيار أحد الأوامر من القائمة أو أرسل `/help`.", reply_markup=get_main_keyboard())
 
 # ==============================================================================
+# ERROR HANDLER AND INITIALIZATION
+# ==============================================================================
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """معالج الأخطاء العالمي لتجنب توقف البوت أو انهياره"""
+    logger.error("حدث استثناء أثناء تنفيذ طلب التلغرام:", exc_info=context.error)
+
+async def post_init(application) -> None:
+    """إزالة الـ Webhook وتصفية التحديثات المعلقة لمنع خطأ get_updates"""
+    logger.info("جاري تنظيف وتصفية اتصالات Webhook المتبقية...")
+    await application.bot.delete_webhook(drop_pending_updates=True)
+
+# ==============================================================================
 # MAIN BOT ENTRYPOINT
 # ==============================================================================
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
+    # إضافة الأوامر
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("dork", dork_command))
     app.add_handler(CommandHandler("stats", stats_command))
     
+    # إضافة معالجة الملفات والاستجابات
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
+    # تسجيل معالج الأخطاء لحل مشكلة No error handlers are registered
+    app.add_error_handler(error_handler)
+
     print("🔥 [BOT RUNNING] البوت جاهز ويعمل بآلية التحكم الشاملة...")
-    app.run_polling()
+    
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+        poll_interval=1.0,
+        timeout=30
+    )
