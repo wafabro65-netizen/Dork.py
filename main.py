@@ -528,7 +528,7 @@ class GoogleDorkerPro:
             time.sleep(random.uniform(3, 5) * self.delay_between_actions)
             
             if not self.handle_captcha():
-                return
+                return 0
             
             pages_without_new = 0
             urls_before = len(self.found_urls)
@@ -573,9 +573,11 @@ class GoogleDorkerPro:
             urls_found = len(self.found_urls) - urls_before
             self.save_dork_results(dork, urls_found)
             self.save_session()
+            return urls_found
             
         except Exception as e:
             print(f"⚠️ [ENGINE ERROR] {str(e)}")
+            return 0
     
     def export_all_results(self):
         excel_path = self.export_to_excel()
@@ -665,10 +667,16 @@ async def dork_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     dorker = dorker_instances[chat_id]
     loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, dorker.search, dork_text)
+    added_now = await loop.run_in_executor(None, dorker.search, dork_text)
 
     if update.message:
-        await update.message.reply_text(f"✅ *اكتمل فحص الدورك!*\nإجمالي الروابط في القاعدة: `{len(dorker.found_urls)}`", parse_mode="Markdown", reply_markup=get_main_keyboard())
+        await update.message.reply_text(
+            f"✅ *اكتمل فحص الدورك!*\n"
+            f"➕ روابط مضافة حديثاً: `{added_now}`\n"
+            f"🌐 إجمالي الروابط في القاعدة: `{len(dorker.found_urls)}`",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -746,7 +754,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("❌ لم يتم العثور على دوركات قيد الانتظار.")
             return
 
-        await query.message.reply_text(f"🚀 *بدء معالجة {len(dorks)} دورك عبر المحرك الخفي...*", parse_mode="Markdown")
+        total_dorks = len(dorks)
+        await query.message.reply_text(f"🚀 *بدء معالجة {total_dorks} دورك عبر المحرك الخفي...*", parse_mode="Markdown")
 
         if chat_id not in dorker_instances or dorker_instances[chat_id] is None:
             dorker_instances[chat_id] = GoogleDorkerPro(headless=True, ultra_slow=False)
@@ -755,12 +764,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         loop = asyncio.get_running_loop()
 
         for i, dork in enumerate(dorks, 1):
-            await query.message.reply_text(f"🎯 *تنفيذ الاستعلام [{i}/{len(dorks)}]:*\n`{dork}`", parse_mode="Markdown")
             await loop.run_in_executor(None, dorker.search, dork)
-            if i < len(dorks):
+            current_total_urls = len(dorker.found_urls)
+            
+            # إرسال تحديث بالتقدم الحالي بعد كل دورك
+            await query.message.reply_text(
+                f"🎯 *التقدم [{i}/{total_dorks}]*\n"
+                f"🔍 **الدورك الحالي:** `{dork}`\n"
+                f"🌐 **إجمالي الروابط الناتجة حتى الآن:** `{current_total_urls}`",
+                parse_mode="Markdown"
+            )
+            
+            if i < total_dorks:
                 await asyncio.sleep(4)
 
-        await query.message.reply_text("✅ *اكتمل فحص الملف بالكامل وتحصيل كافة الروابط!*", parse_mode="Markdown", reply_markup=get_main_keyboard())
+        await query.message.reply_text(
+            f"✅ *اكتمل فحص الملف بالكامل!*\n"
+            f"📊 **إجمالي الدوركات:** `{total_dorks}`\n"
+            f"🌐 **إجمالي الروابط الفريدة المستخرجة:** `{len(dorker.found_urls)}`",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
 
     elif data == "filter_file_data":
         dorks = user_files_data.get(chat_id, [])
@@ -791,10 +815,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             loop = asyncio.get_running_loop()
             txt, excel, pdf = await loop.run_in_executor(None, dorker.export_all_results)
 
+            files_sent = 0
             for file_path in [txt, excel, pdf, dorker.output_file, dorker.emails_file]:
-                if file_path and os.path.exists(file_path):
-                    with open(file_path, 'rb') as doc:
-                        await context.bot.send_document(chat_id=chat_id, document=doc)
+                # التثبت من وجود الملف وأن حجمه أكثر من 0 بايت لتجنب BadRequest Error
+                if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    try:
+                        with open(file_path, 'rb') as doc:
+                            await context.bot.send_document(chat_id=chat_id, document=doc)
+                        files_sent += 1
+                    except Exception as e:
+                        logger.error(f"فشل إرسال الملف {file_path}: {e}")
+            
+            if files_sent == 0:
+                await query.message.reply_text("⚠️ لم يتم استخراج أي بيانات بعد، أو أن النتائج فارغة حالياً.")
         else:
             await query.message.reply_text("❌ لا توجد نتائج جارية للتصدير.")
 
@@ -827,8 +860,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🚀 *جاري تشغيل الفحص للدورك:*\n`{dork}`", parse_mode="Markdown")
 
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, dorker.search, dork)
-        await update.message.reply_text("✅ *اكتملت عملية الاستخراج!*", parse_mode="Markdown", reply_markup=get_main_keyboard())
+        added_now = await loop.run_in_executor(None, dorker.search, dork)
+        await update.message.reply_text(
+            f"✅ *اكتملت عملية الاستخراج!*\n"
+            f"➕ روابط جديدة: `{added_now}`\n"
+            f"🌐 المجموع الكلي للروابط: `{len(dorker.found_urls)}`",
+            parse_mode="Markdown",
+            reply_markup=get_main_keyboard()
+        )
     else:
         await update.message.reply_text("يرجى اختيار أحد الأوامر من القائمة أو أرسل `/help`.", reply_markup=get_main_keyboard())
 
@@ -868,7 +907,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-    # تسجيل معالج الأخطاء لحل مشكلة No error handlers are registered
+    # تسجيل معالج الأخطاء
     app.add_error_handler(error_handler)
 
     print("🔥 [BOT RUNNING] البوت جاهز ويعمل بآلية التحكم الشاملة...")
