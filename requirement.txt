@@ -1,0 +1,7 @@
+python-telegram-bot
+selenium
+webdriver-manager
+fake-useragent
+requests
+openpyxl
+reportlab
