@@ -1,7 +1,5 @@
-python-telegram-bot
-selenium
-webdriver-manager
-fake-useragent
+
+pyTelegramBotAPI
 requests
-openpyxl
-reportlab
+requests-toolbelt
+user-agent
