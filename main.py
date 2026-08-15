@@ -22,7 +22,7 @@ OWNER_ID = 6843321125
 waiting_users = {}
 reply_mode = {}
 bulk_waiting = {}
-stop_flags = {}  # لتتبع إيقاف الملفات
+stop_flags = {}
 
 if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
@@ -512,7 +512,16 @@ def bulk_extract_start(message):
 
     user_id = message.from_user.id
     bulk_waiting[user_id] = True
-    msg = bot.reply_to(message, "📁 Send .txt files (one link per line):\n\nYou can send multiple files.\nUse /stop [number] to stop a file\nUse /done when finished.")
+    msg = bot.reply_to(message, """📁 <b>Bulk Mode Active</b>
+━━━━━━━━━━━━━━━━━━
+Send .txt files (one link per line)
+You can send multiple files
+
+<b>Commands:</b>
+🛑 /stop [number] - Stop a specific file
+🛑 /stop - Stop all files
+✅ /done - End bulk mode
+━━━━━━━━━━━━━━━━━━""", parse_mode="HTML")
 
 # أمر إيقاف ملف معين
 @bot.message_handler(commands=['stop'])
@@ -522,13 +531,12 @@ def stop_bulk_file(message):
         parts = message.text.split()
         if len(parts) > 1:
             file_num = int(parts[1])
-            if user_id in stop_flags:
+            if user_id in stop_flags and file_num in stop_flags[user_id]:
                 stop_flags[user_id][file_num] = True
-                bot.reply_to(message, f"🛑 Stopping file #{file_num}...")
+                bot.reply_to(message, f"🛑 Stopping File #{file_num}...")
             else:
-                bot.reply_to(message, "❌ No active files to stop.")
+                bot.reply_to(message, f"❌ File #{file_num} not found.")
         else:
-            # إيقاف كل الملفات
             if user_id in stop_flags:
                 for key in stop_flags[user_id]:
                     stop_flags[user_id][key] = True
@@ -545,6 +553,8 @@ def bulk_done(message):
     if user_id in bulk_waiting:
         del bulk_waiting[user_id]
         if user_id in stop_flags:
+            for key in stop_flags[user_id]:
+                stop_flags[user_id][key] = True
             del stop_flags[user_id]
         bot.reply_to(message, "✅ Bulk mode ended.")
     else:
@@ -555,7 +565,6 @@ def bulk_done(message):
 def handle_bulk_file(message):
     user_id = message.from_user.id
     if user_id in bulk_waiting:
-        # بدء فحص الملف في thread منفصل عشان نقدر نستقبل أوامر تانية
         threading.Thread(target=process_bulk_file, args=(message,)).start()
     else:
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
@@ -580,13 +589,11 @@ def process_bulk_file(message):
 
         total = len(links)
         
-        # إعطاء رقم للملف
         if user_id not in stop_flags:
             stop_flags[user_id] = {}
         file_num = len(stop_flags[user_id]) + 1
         stop_flags[user_id][file_num] = False
         
-        # تهيئة عداد جديد لهذا الملف
         processing_status[f"{user_id}_{file_num}"] = {
             'total': total,
             'processed': 0,
@@ -595,14 +602,16 @@ def process_bulk_file(message):
             'lock': threading.Lock()
         }
         
-        status_msg = bot.reply_to(message, f"""📊 <b>File #{file_num} - جاري فحص الروابط...</b>
+        status_msg = bot.reply_to(message, f"""📊 <b>File #{file_num} - Scanning links...</b>
 ━━━━━━━━━━━━━━━━━━
-📌 إجمالي الروابط: {total}
-✅ شغالة: 0
-❌ ميتة: 0
-⏳ التقدم: 0%
+📌 Total Links: {total}
+✅ Live: 0
+❌ Dead: 0
+⏳ Progress: 0%
 ━━━━━━━━━━━━━━━━━━
-🛑 Use /stop {file_num} to stop this file""", parse_mode="HTML")
+🛑 /stop {file_num} to stop this file""", parse_mode="HTML")
+        
+        live_count = 0
         
         def check_link(link):
             try:
@@ -642,12 +651,9 @@ def process_bulk_file(message):
             except:
                 return None
         
-        live_data = []
         stopped = False
         
-        # فحص الروابط واحد واحد
         for idx, link in enumerate(links, 1):
-            # فحص إذا كان الملف متوقف
             if user_id in stop_flags and file_num in stop_flags[user_id] and stop_flags[user_id][file_num]:
                 stopped = True
                 break
@@ -656,9 +662,32 @@ def process_bulk_file(message):
             
             with processing_status[f"{user_id}_{file_num}"]['lock']:
                 processing_status[f"{user_id}_{file_num}"]['processed'] += 1
+                
                 if result:
                     processing_status[f"{user_id}_{file_num}"]['live'] += 1
-                    live_data.append(result)
+                    live_count += 1
+                    
+                    # إرسال الملف فوراً
+                    try:
+                        code = generate_gateway_code(result, live_count, file_num)
+                        file_name = f'gateway_{file_num}_{live_count}_{user_id}.py'
+                        with open(file_name, 'w', encoding='utf-8') as f:
+                            f.write(code)
+                        with open(file_name, 'rb') as f:
+                            bot.send_document(
+                                chat_id,
+                                f,
+                                caption=f"""✅ <b>File #{file_num} - Gateway #{live_count}</b>
+━━━━━━━━━━━━━━━━━━━━
+🔗 Link: <code>{result['link']}</code>
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr""",
+                                parse_mode="HTML"
+                            )
+                        os.remove(file_name)
+                        time.sleep(0.5)
+                    except Exception as e:
+                        print(f"Error sending file: {e}")
                 else:
                     processing_status[f"{user_id}_{file_num}"]['dead'] += 1
                 
@@ -672,92 +701,60 @@ def process_bulk_file(message):
                     filled = int((progress / 100) * bar_length)
                     bar = '█' * filled + '░' * (bar_length - filled)
                     
-                    text = f"""📊 <b>File #{file_num} - جاري فحص الروابط...</b>
+                    text = f"""📊 <b>File #{file_num} - Scanning links...</b>
 ━━━━━━━━━━━━━━━━━━
-📌 إجمالي الروابط: {total}
-✅ شغالة: {live}
-❌ ميتة: {dead}
-⏳ التقدم: {progress}% {bar}
+📌 Total Links: {total}
+✅ Live: {live}
+❌ Dead: {dead}
+⏳ Progress: {progress}% {bar}
 ━━━━━━━━━━━━━━━━━━
-⏱️ تم فحص {processed} من {total}
-🛑 Use /stop {file_num} to stop this file"""
+⏱️ Checked {processed} of {total}
+🛑 /stop {file_num} to stop this file"""
                     
                     try:
                         bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
                     except:
                         pass
             
-            time.sleep(0.5)
+            time.sleep(0.3)
+        
+        status = processing_status[f"{user_id}_{file_num}"]
         
         if stopped:
-            stop_text = f"""🛑 <b>File #{file_num} Stopped!</b>
+            final_text = f"""🛑 <b>File #{file_num} Stopped!</b>
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {total}
-✅ Checked: {processing_status[f"{user_id}_{file_num}"]['processed']}
-✅ Live: {processing_status[f"{user_id}_{file_num}"]['live']}
-❌ Dead: {processing_status[f"{user_id}_{file_num}"]['dead']}
+✅ Checked: {status['processed']}
+✅ Live (Sent): {status['live']}
+❌ Dead: {status['dead']}
 ━━━━━━━━━━━━━━━━━━
 📁 Send another file or /done to finish."""
-            try:
-                bot.edit_message_text(stop_text, chat_id, status_msg.message_id, parse_mode="HTML")
-            except:
-                bot.send_message(chat_id, stop_text, parse_mode="HTML")
         else:
-            status = processing_status[f"{user_id}_{file_num}"]
-            
-            # إرسال كل رابط حي كملف منفصل
-            if live_data:
-                for idx, data in enumerate(live_data, 1):
-                    try:
-                        code = generate_gateway_code(data, idx, file_num)
-                        file_name = f'gateway_{file_num}_{idx}_{user_id}.py'
-                        with open(file_name, 'w', encoding='utf-8') as f:
-                            f.write(code)
-                        with open(file_name, 'rb') as f:
-                            bot.send_document(
-                                chat_id,
-                                f,
-                                caption=f"""✅ <b>File #{file_num} - Gateway #{idx}</b>
-━━━━━━━━━━━━━━━━━━━━
-🔗 Link: <code>{data['link']}</code>
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr""",
-                                parse_mode="HTML"
-                            )
-                        os.remove(file_name)
-                        time.sleep(1)
-                    except Exception as e:
-                        print(f"Error sending file {idx}: {e}")
-                        continue
-                
+            if status['live'] > 0:
                 final_text = f"""📊 <b>✅ File #{file_num} Complete!</b>
-━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 📌 Total Links: {status['total']}
-✅ Live (Extracted): {status['live']}
+✅ Live (Sent): {status['live']}
 ❌ Dead (Failed): {status['dead']}
 💯 Success Rate: {int((status['live']/status['total'])*100) if status['total'] > 0 else 0}%
-━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 📁 Send another file or /done to finish.
 Dev: @nnunrr"""
-                try:
-                    bot.edit_message_text(final_text, chat_id, status_msg.message_id, parse_mode="HTML")
-                except:
-                    bot.send_message(chat_id, final_text, parse_mode="HTML")
             else:
-                no_live_text = f"""📊 <b>❌ File #{file_num} - No live links found!</b>
-━━━━━━━━━━━━━━━━━━━━
+                final_text = f"""📊 <b>❌ File #{file_num} - No live links found!</b>
+━━━━━━━━━━━━━━━━━━
 📌 Total Links: {status['total']}
 ✅ Live: 0
 ❌ Dead: {status['dead']}
-━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━
 📁 Send another file or /done to finish.
 Dev: @nnunrr"""
-                try:
-                    bot.edit_message_text(no_live_text, chat_id, status_msg.message_id, parse_mode="HTML")
-                except:
-                    bot.send_message(chat_id, no_live_text, parse_mode="HTML")
         
-        # تنظيف
+        try:
+            bot.edit_message_text(final_text, chat_id, status_msg.message_id, parse_mode="HTML")
+        except:
+            bot.send_message(chat_id, final_text, parse_mode="HTML")
+        
         if f"{user_id}_{file_num}" in processing_status:
             del processing_status[f"{user_id}_{file_num}"]
         cleanup_memory()
@@ -792,7 +789,8 @@ class PayPal{file_num}_{idx}:
         self.checked = 0
 
     def Charge(self, ccx):
-        self.checked += 1        ccx = ccx.strip()
+        self.checked += 1
+        ccx = ccx.strip()
         n = ccx.split("|")[0]
         mm = ccx.split("|")[1]
         yy = ccx.split("|")[2]
