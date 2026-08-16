@@ -23,12 +23,11 @@ waiting_users = {}
 reply_mode = {}
 bulk_waiting = {}
 stop_flags = {}
+processing_status = {}
 
 if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
         f.write('')
-
-processing_status = {}
 
 def cleanup_memory():
     gc.collect()
@@ -211,41 +210,10 @@ def ali_al2(massege):
         'x-requested-with': 'XMLHttpRequest',
     }
 
-    data = {
-        'give-honeypot': '',
-        'give-form-id-prefix': id_form1,
-        'give-form-id': id_form2,
-        'give-form-title': '',
-        'give-current-url': f'{USER_URL}',
-        'give-form-url': f'{USER_URL}',
-        'give-form-minimum': '1.00',
-        'give-form-maximum': '999999.99',
-        'give-form-hash': nonec,
-        'give-price-id': '3',
-        'give-amount': '1.00',
-        'payment-mode': 'paypal-commerce',
-        'give_first': 'Ali',
-        'give_last': 'rights and',
-        'give_email': 'Ali22@gmail.com',
-        'give-gateway': 'paypal-commerce',
-        'give_action': 'purchase',
-        'action': 'give_process_donation',
-        'give_ajax': 'true',
-    }
-
-    response = r.post(f'{USER_URL2}/wp-admin/admin-ajax.php', cookies=r.cookies, headers=headers, data=data, timeout=15)
-    
     data = MultipartEncoder({
-        'give-honeypot': (None, ''),
         'give-form-id-prefix': (None, id_form1),
         'give-form-id': (None, id_form2),
-        'give-form-title': (None, ''),
-        'give-current-url': (None, f'{USER_URL}'),
-        'give-form-url': (None, f'{USER_URL}'),
-        'give-form-minimum': (None, '1.00'),
-        'give-form-maximum': (None, '999999.99'),
         'give-form-hash': (None, nonec),
-        'give-price-id': (None, '3'),
         'give-amount': (None, '1.00'),
         'payment-mode': (None, 'paypal-commerce'),
         'give_first': (None, 'Ali'),
@@ -309,16 +277,9 @@ def ali_al2(massege):
     )
 
     data = MultipartEncoder({
-        'give-honeypot': (None, ''),
         'give-form-id-prefix': (None, id_form1),
         'give-form-id': (None, id_form2),
-        'give-form-title': (None, ''),
-        'give-current-url': (None, f'{USER_URL}'),
-        'give-form-url': (None, f'{USER_URL}'),
-        'give-form-minimum': (None, '1.00'),
-        'give-form-maximum': (None, '999999.99'),
         'give-form-hash': (None, nonec),
-        'give-price-id': (None, '3'),
         'give-amount': (None, '1.00'),
         'payment-mode': (None, 'paypal-commerce'),
         'give_first': (None, 'Ali'),
@@ -342,7 +303,7 @@ def ali_al2(massege):
     )
     
     if 'ORDER_NOT_APPROVED' in response.text:
-        msg = 'ORDER_NOT_APPROVED'
+        msg = 'Payer cannot pay for this transaction. Please contact the payer to find other ways to pay for this transaction.'
     else:
         try:
             msg = response.json()['data']['error']
@@ -434,7 +395,7 @@ class PayPal:
         text = r5.text
         if 'true' in text: return 'CHARGE 1.00$'
         elif 'INSUFFICIENT_FUNDS' in text: return "INSUFFICIENT_FUNDS"
-        elif 'ORDER_NOT_APPROVED' in text: return "ORDER_NOT_APPROVED"
+        elif 'ORDER_NOT_APPROVED' in text: return "Payer cannot pay for this transaction. Please contact the payer to find other ways to pay for this transaction."
         else:
             try: return r5.json()['data']['error']
             except: return "UNKNOWN_ERROR"
@@ -523,7 +484,6 @@ You can send multiple files
 ✅ /done - End bulk mode
 ━━━━━━━━━━━━━━━━━━""", parse_mode="HTML")
 
-# أمر إيقاف ملف معين
 @bot.message_handler(commands=['stop'])
 def stop_bulk_file(message):
     user_id = message.from_user.id
@@ -546,7 +506,6 @@ def stop_bulk_file(message):
     except:
         bot.reply_to(message, "Usage: /stop [file_number]")
 
-# أمر إنهاء bulk
 @bot.message_handler(commands=['done'])
 def bulk_done(message):
     user_id = message.from_user.id
@@ -560,7 +519,6 @@ def bulk_done(message):
     else:
         bot.reply_to(message, "You are not in bulk mode.")
 
-# معالج الملفات في وضع bulk
 @bot.message_handler(content_types=['document'])
 def handle_bulk_file(message):
     user_id = message.from_user.id
@@ -667,7 +625,6 @@ def process_bulk_file(message):
                     processing_status[f"{user_id}_{file_num}"]['live'] += 1
                     live_count += 1
                     
-                    # إرسال الملف فوراً
                     try:
                         code = generate_gateway_code(result, live_count, file_num)
                         file_name = f'gateway_{file_num}_{live_count}_{user_id}.py'
@@ -847,7 +804,7 @@ class PayPal{file_num}_{idx}:
         text = r5.text
         if 'true' in text: return 'CHARGE 1.00$'
         elif 'INSUFFICIENT_FUNDS' in text: return "INSUFFICIENT_FUNDS"
-        elif 'ORDER_NOT_APPROVED' in text: return "ORDER_NOT_APPROVED"
+        elif 'ORDER_NOT_APPROVED' in text: return "Payer cannot pay for this transaction. Please contact the payer to find other ways to pay for this transaction."
         else:
             try: return r5.json()['data']['error']
             except: return "UNKNOWN_ERROR"
