@@ -16,7 +16,9 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import traceback
 from requests.exceptions import ReadTimeout, ConnectionError
-from queue import Queue
+import aiohttp
+import asyncio
+from aiohttp import ClientTimeout, TCPConnector
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -40,14 +42,11 @@ bulk_waiting = {}
 stop_flags = {}
 processing_status = {}
 
-# === Thread Pool محسن للملفات الكبيرة ===
-executor = ThreadPoolExecutor(max_workers=20)  # زيادة العمال
-
-# === إعدادات الملفات الكبيرة ===
-MAX_LINKS_PER_FILE = 100000  # الحد الأقصى للروابط
-BATCH_SIZE = 1000  # حجم الدفعة للفحص
-MAX_WORKERS_FOR_CHECK = 15  # عدد العمال للفحص المتوازي
-UPDATE_INTERVAL = 500  # تحديث الرسالة كل 500 رابط
+# === إعدادات السرعة القصوى ===
+MAX_CONCURRENT = 50  # 50 فحص متوازي
+TIMEOUT_SECONDS = 3  # مهلة 3 ثواني فقط
+BATCH_SIZE = 2000  # 2000 رابط في الدفعة
+UPDATE_INTERVAL = 1000  # تحديث كل 1000 رابط
 
 def cleanup_memory():
     """تنظيف الذاكرة"""
@@ -539,64 +538,71 @@ def handle_bulk_file(message):
     try:
         user_id = message.from_user.id
         if user_id in bulk_waiting:
-            executor.submit(process_bulk_file_optimized, message)
+            executor.submit(process_bulk_file_fast, message)
         else:
             bot.reply_to(message, "Use /bulk first to start bulk extraction.")
     except Exception as e:
         print(f"Error in handle_bulk_file: {e}")
 
-def check_link(link):
-    """فحص رابط واحد"""
-    session = None
+async def check_link_async(session, link):
+    """فحص رابط واحد بسرعة فائقة"""
     try:
-        if not link.startswith(("http://", "https://")):
-            return None
-        
-        session = requests.Session()
-        session.headers.update({"User-Agent": generate_user_agent()})
-        
-        r = session.get(link, timeout=10)
-        if r.status_code != 200:
-            session.close()
-            return None
-        
-        res = r.text
-        id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
-        id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
-        nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
-        anc = re.search(r'"data-client-token":"(.*?)"', res)
-        
-        if not all([id_form1, id_form2, nonec, anc]):
-            session.close()
-            return None
-        
-        id_form1 = id_form1.group(1)
-        id_form2 = id_form2.group(1)
-        nonec = nonec.group(1)
-        enc = anc.group(1)
-        dec = base64.b64decode(enc).decode('utf-8')
-        au_match = re.search(r'"accessToken":"(.*?)"', dec)
-        if not au_match:
-            session.close()
-            return None
-        au = au_match.group(1)
-        
-        session.close()
-        
-        return {
-            'link': link,
-            'id_form1': id_form1,
-            'id_form2': id_form2,
-            'nonec': nonec,
-            'au': au
-        }
+        timeout = ClientTimeout(total=TIMEOUT_SECONDS)
+        async with session.get(link, timeout=timeout, ssl=False) as r:
+            if r.status != 200:
+                return None
+            
+            res = await r.text()
+            
+            # فلترة سريعة - فحص النص دفعة واحدة
+            if 'give-form-id-prefix' not in res or 'data-client-token' not in res:
+                return None
+            
+            id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
+            id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
+            nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
+            anc = re.search(r'"data-client-token":"(.*?)"', res)
+            
+            if not all([id_form1, id_form2, nonec, anc]):
+                return None
+            
+            id_form1 = id_form1.group(1)
+            id_form2 = id_form2.group(1)
+            nonec = nonec.group(1)
+            enc = anc.group(1)
+            
+            try:
+                dec = base64.b64decode(enc).decode('utf-8')
+            except:
+                return None
+            
+            au_match = re.search(r'"accessToken":"(.*?)"', dec)
+            if not au_match:
+                return None
+            
+            return {
+                'link': link,
+                'id_form1': id_form1,
+                'id_form2': id_form2,
+                'nonec': nonec,
+                'au': au_match.group(1)
+            }
     except:
-        if session:
-            session.close()
         return None
 
-def process_bulk_file_optimized(message):
-    """نسخة محسنة للملفات الكبيرة"""
+async def check_batch_async(links):
+    """فحص دفعة كاملة بسرعة"""
+    connector = TCPConnector(limit=MAX_CONCURRENT, ssl=False)
+    timeout = ClientTimeout(total=TIMEOUT_SECONDS)
+    
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        tasks = [check_link_async(session, link) for link in links]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    return [r for r in results if r is not None and not isinstance(r, Exception)]
+
+def process_bulk_file_fast(message):
+    """معالجة فائقة السرعة للملفات"""
     try:
         user_id = message.from_user.id
         chat_id = message.chat.id
@@ -608,7 +614,7 @@ def process_bulk_file_optimized(message):
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        # قراءة الروابط بكفاءة
+        # قراءة الروابط بسرعة
         links = []
         for line in downloaded_file.decode('utf-8', errors='ignore').splitlines():
             link = line.strip()
@@ -620,15 +626,6 @@ def process_bulk_file_optimized(message):
             return
 
         total = len(links)
-        
-        # تحذير للملفات الكبيرة
-        if total > 10000:
-            bot.send_message(chat_id, f"""⚠️ <b>Large file detected!</b>
-━━━━━━━━━━━━━━━━━━
-📌 Total Links: {total}
-⏱️ Estimated time: {int(total * 0.5 / 60)} minutes
-━━━━━━━━━━━━━━━━━━
-Processing will continue in background...""", parse_mode="HTML")
         
         if user_id not in stop_flags:
             stop_flags[user_id] = {}
@@ -643,7 +640,7 @@ Processing will continue in background...""", parse_mode="HTML")
             'lock': threading.Lock()
         }
         
-        status_msg = bot.reply_to(message, f"""📊 <b>File #{file_num} - Scanning links...</b>
+        status_msg = bot.reply_to(message, f"""⚡ <b>File #{file_num} - Fast Scanning...</b>
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {total}
 ✅ Live: 0
@@ -652,11 +649,10 @@ Processing will continue in background...""", parse_mode="HTML")
 ━━━━━━━━━━━━━━━━━━
 🛑 /stop {file_num} to stop this file""", parse_mode="HTML")
         
-        live_count = 0
-        stopped = False
         live_links = []
+        stopped = False
         
-        # فحص الروابط بالدفعات
+        # فحص سريع بالدفعات
         for batch_start in range(0, total, BATCH_SIZE):
             if user_id in stop_flags and file_num in stop_flags[user_id] and stop_flags[user_id][file_num]:
                 stopped = True
@@ -665,39 +661,29 @@ Processing will continue in background...""", parse_mode="HTML")
             batch_end = min(batch_start + BATCH_SIZE, total)
             batch_links = links[batch_start:batch_end]
             
-            # فحص متوازي للدفعة
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS_FOR_CHECK) as check_executor:
-                futures = {check_executor.submit(check_link, link): link for link in batch_links}
+            # فحص الدفعة بالكامل بشكل متوازي
+            try:
+                batch_results = asyncio.run(check_batch_async(batch_links))
+            except:
+                batch_results = []
+            
+            with processing_status[f"{user_id}_{file_num}"]['lock']:
+                processing_status[f"{user_id}_{file_num}"]['processed'] += len(batch_links)
+                processing_status[f"{user_id}_{file_num}"]['live'] += len(batch_results)
+                processing_status[f"{user_id}_{file_num}"]['dead'] += len(batch_links) - len(batch_results)
                 
-                for future in as_completed(futures):
-                    if user_id in stop_flags and file_num in stop_flags[user_id] and stop_flags[user_id][file_num]:
-                        stopped = True
-                        break
-                    
-                    result = future.result()
-                    
-                    with processing_status[f"{user_id}_{file_num}"]['lock']:
-                        processing_status[f"{user_id}_{file_num}"]['processed'] += 1
-                        
-                        if result:
-                            processing_status[f"{user_id}_{file_num}"]['live'] += 1
-                            live_links.append(result)
-                        else:
-                            processing_status[f"{user_id}_{file_num}"]['dead'] += 1
-                        
-                        processed = processing_status[f"{user_id}_{file_num}"]['processed']
-                        
-                        # تحديث الرسالة كل UPDATE_INTERVAL رابط
-                        if processed % UPDATE_INTERVAL == 0 or processed == total:
-                            live = processing_status[f"{user_id}_{file_num}"]['live']
-                            dead = processing_status[f"{user_id}_{file_num}"]['dead']
-                            progress = int((processed / total) * 100)
-                            
-                            bar_length = 20
-                            filled = int((progress / 100) * bar_length)
-                            bar = '█' * filled + '░' * (bar_length - filled)
-                            
-                            text = f"""📊 <b>File #{file_num} - Scanning links...</b>
+                live_links.extend(batch_results)
+                
+                processed = processing_status[f"{user_id}_{file_num}"]['processed']
+                live = processing_status[f"{user_id}_{file_num}"]['live']
+                dead = processing_status[f"{user_id}_{file_num}"]['dead']
+                progress = int((processed / total) * 100)
+                
+                bar_length = 20
+                filled = int((progress / 100) * bar_length)
+                bar = '█' * filled + '░' * (bar_length - filled)
+                
+                text = f"""⚡ <b>File #{file_num} - Fast Scanning...</b>
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {total}
 ✅ Live: {live}
@@ -705,19 +691,17 @@ Processing will continue in background...""", parse_mode="HTML")
 ⏳ Progress: {progress}% {bar}
 ━━━━━━━━━━━━━━━━━━
 ⏱️ Checked {processed} of {total}
+⚡ Speed: ~{int(len(batch_links) / 3)} links/sec
 🛑 /stop {file_num} to stop this file"""
-                            
-                            try:
-                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                            except:
-                                pass
-            
-            if stopped:
-                break
+                
+                try:
+                    bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+                except:
+                    pass
         
         # إرسال الملفات live
         if live_links:
-            bot.send_message(chat_id, f"✅ Found {len(live_links)} live links! Generating files...", parse_mode="HTML")
+            bot.send_message(chat_id, f"✅ Found {len(live_links)} live links! Sending files...", parse_mode="HTML")
             
             for idx, result in enumerate(live_links, 1):
                 try:
@@ -737,7 +721,7 @@ Dev: @nnunrr""",
                             parse_mode="HTML"
                         )
                     os.remove(file_name)
-                    time.sleep(0.5)
+                    time.sleep(0.3)
                 except Exception as e:
                     print(f"Error sending file: {e}")
         
@@ -748,17 +732,17 @@ Dev: @nnunrr""",
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {total}
 ✅ Checked: {status['processed']}
-✅ Live (Sent): {status['live']}
+✅ Live: {status['live']}
 ❌ Dead: {status['dead']}
 ━━━━━━━━━━━━━━━━━━
 📁 Send another file or /done to finish."""
         else:
             if status['live'] > 0:
-                final_text = f"""📊 <b>✅ File #{file_num} Complete!</b>
+                final_text = f"""⚡ <b>✅ File #{file_num} Complete!</b>
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {status['total']}
-✅ Live (Sent): {status['live']}
-❌ Dead (Failed): {status['dead']}
+✅ Live: {status['live']}
+❌ Dead: {status['dead']}
 💯 Success Rate: {int((status['live']/status['total'])*100) if status['total'] > 0 else 0}%
 ━━━━━━━━━━━━━━━━━━
 📁 Send another file or /done to finish.
@@ -783,7 +767,7 @@ Dev: @nnunrr"""
         cleanup_memory()
             
     except Exception as e:
-        print(f"Error in process_bulk_file_optimized: {e}")
+        print(f"Error in process_bulk_file_fast: {e}")
         traceback.print_exc()
         cleanup_memory()
 
@@ -970,10 +954,9 @@ print('✅ Bot is running...')
 if __name__ == '__main__':
     while True:
         try:
-            bot.polling(none_stop=False, interval=1, timeout=30)
+            bot.polling(none_stop=False, interval=0, timeout=30)
         except KeyboardInterrupt:
             print('🛑 Bot stopped by user')
-            executor.shutdown(wait=False)
             sys.exit(0)
         except ReadTimeout:
             print('⚠️ ReadTimeout - إعادة الاتصال...')
