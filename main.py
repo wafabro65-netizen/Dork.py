@@ -556,20 +556,26 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص رابط PayPal"""
+    """فحص رابط PayPal بدقة عالية"""
     try:
         if not link.startswith(("http://", "https://")):
             return None
 
-        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=5, allow_redirects=True)
+        # محاولة أولى
+        try:
+            r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, allow_redirects=True)
+        except:
+            # محاولة تانية بعد ثانية
+            time.sleep(1)
+            try:
+                r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, allow_redirects=True)
+            except:
+                return None
+        
         if r.status_code != 200:
             return None
 
         res = r.text
-        
-        # فحص سريع
-        if 'give-form-id' not in res or 'data-client-token' not in res:
-            return None
         
         id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
         id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
@@ -694,9 +700,9 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # المعالجة المتوازية الآمنة
-        max_workers = 15
-        batch_size = 30
+        # المعالجة المتوازية - 10 خيوط للدقة
+        max_workers = 10
+        batch_size = 20
         
         for i in range(0, total, batch_size):
             if stop_event.is_set():
@@ -726,12 +732,12 @@ def process_bulk_file(message):
                 
                 if len(threads) >= max_workers:
                     for t in threads:
-                        t.join(timeout=10)
+                        t.join(timeout=20)
                     threads = []
             
             # استنى باقي الخيوط
             for t in threads:
-                t.join(timeout=10)
+                t.join(timeout=20)
             
             # معالجة النتائج
             for idx in range(len(batch_links)):
@@ -767,7 +773,7 @@ Dev: @nnunrr"""
             del results
             del threads
             cleanup_memory()
-            time.sleep(0.2)
+            time.sleep(0.3)
 
         # إيقاف خيط التحديث
         stop_event.set()
