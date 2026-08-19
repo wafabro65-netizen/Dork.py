@@ -10,6 +10,8 @@ import html
 from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -25,12 +27,39 @@ bulk_waiting = {}
 stop_flags = {}
 processing_status = {}
 
+# طابور منفصل لإرسال المستندات والرسائل فوراً لمنع حظر التلجرام وسقوط البوت
+send_queue = Queue()
+
 if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
         f.write('')
 
 def cleanup_memory():
     gc.collect()
+
+# Worker منفصل لإرسال الملفات فوراً من الطابور بدون تعطيل الفحص
+def send_worker():
+    while True:
+        task = send_queue.get()
+        if task is None:
+            break
+        chat_id, file_path, caption = task
+        try:
+            if os.path.exists(file_path):
+                with open(file_path, 'rb') as f:
+                    bot.send_document(chat_id, f, caption=caption, parse_mode="HTML")
+                os.remove(file_path)
+            time.sleep(1) # مهلة زمنية بسيطة لحماية البوت من الـ FloodWait
+        except Exception as e:
+            print(f"Error sending document: {e}")
+            if os.path.exists(file_path):
+                try: os.remove(file_path)
+                except: pass
+        finally:
+            send_queue.task_done()
+
+# تشغيل Worker الإرسال فور بدء البوت
+threading.Thread(target=send_worker, daemon=True).start()
 
 @bot.message_handler(commands=["start"])
 def start(message):
@@ -527,6 +556,45 @@ def handle_bulk_file(message):
     else:
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
+def check_link(link):
+    """نفس دالة الفحص الخاصة بك بدون أي تعديل في المعايير"""
+    try:
+        if not link.startswith(("http://", "https://")):
+            return None
+        
+        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return None
+        
+        res = r.text
+        id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
+        id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
+        nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
+        anc = re.search(r'"data-client-token":"(.*?)"', res)
+        
+        if not all([id_form1, id_form2, nonec, anc]):
+            return None
+        
+        id_form1 = id_form1.group(1)
+        id_form2 = id_form2.group(1)
+        nonec = nonec.group(1)
+        enc = anc.group(1)
+        dec = base64.b64decode(enc).decode('utf-8')
+        au = re.search(r'"accessToken":"(.*?)"', dec)
+        if not au:
+            return None
+        au = au.group(1)
+        
+        return {
+            'link': link,
+            'id_form1': id_form1,
+            'id_form2': id_form2,
+            'nonec': nonec,
+            'au': au
+        }
+    except:
+        return None
+
 def process_bulk_file(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
@@ -538,8 +606,10 @@ def process_bulk_file(message):
     try:
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
-        links = downloaded_file.decode('utf-8').splitlines()
-        links = [link.strip() for link in links if link.strip()]
+        
+        # قراءة السطور بسرعة لتوفير الذاكرة
+        lines = downloaded_file.decode('utf-8', errors='ignore').splitlines()
+        links = [link.strip() for link in lines if link.strip()]
 
         if not links:
             bot.reply_to(message, "❌ File is empty.")
@@ -552,7 +622,8 @@ def process_bulk_file(message):
         file_num = len(stop_flags[user_id]) + 1
         stop_flags[user_id][file_num] = False
         
-        processing_status[f"{user_id}_{file_num}"] = {
+        status_key = f"{user_id}_{file_num}"
+        processing_status[status_key] = {
             'total': total,
             'processed': 0,
             'live': 0,
@@ -569,96 +640,64 @@ def process_bulk_file(message):
 ━━━━━━━━━━━━━━━━━━
 🛑 /stop {file_num} to stop this file""", parse_mode="HTML")
         
-        live_count = 0
-        
-        def check_link(link):
-            try:
-                if not link.startswith(("http://", "https://")):
-                    return None
-                
-                r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-                if r.status_code != 200:
-                    return None
-                
-                res = r.text
-                id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
-                id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
-                nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
-                anc = re.search(r'"data-client-token":"(.*?)"', res)
-                
-                if not all([id_form1, id_form2, nonec, anc]):
-                    return None
-                
-                id_form1 = id_form1.group(1)
-                id_form2 = id_form2.group(1)
-                nonec = nonec.group(1)
-                enc = anc.group(1)
-                dec = base64.b64decode(enc).decode('utf-8')
-                au = re.search(r'"accessToken":"(.*?)"', dec)
-                if not au:
-                    return None
-                au = au.group(1)
-                
-                return {
-                    'link': link,
-                    'id_form1': id_form1,
-                    'id_form2': id_form2,
-                    'nonec': nonec,
-                    'au': au
-                }
-            except:
-                return None
-        
         stopped = False
-        
-        for idx, link in enumerate(links, 1):
-            if user_id in stop_flags and file_num in stop_flags[user_id] and stop_flags[user_id][file_num]:
-                stopped = True
-                break
-            
-            result = check_link(link)
-            
-            with processing_status[f"{user_id}_{file_num}"]['lock']:
-                processing_status[f"{user_id}_{file_num}"]['processed'] += 1
-                
-                if result:
-                    processing_status[f"{user_id}_{file_num}"]['live'] += 1
-                    live_count += 1
-                    
-                    try:
-                        code = generate_gateway_code(result, live_count, file_num)
-                        file_name = f'gateway_{file_num}_{live_count}_{user_id}.py'
-                        with open(file_name, 'w', encoding='utf-8') as f:
-                            f.write(code)
-                        with open(file_name, 'rb') as f:
-                            bot.send_document(
-                                chat_id,
-                                f,
-                                caption=f"""✅ <b>File #{file_num} - Gateway #{live_count}</b>
+
+        # استخدام مجمع خيوط معالج للحفاظ على سرعة الفحص وعدم استهلاك المعالج بالكامل
+        with ThreadPoolExecutor(max_workers=15) as executor:
+            batch_size = 50
+            for i in range(0, total, batch_size):
+                if user_id in stop_flags and file_num in stop_flags[user_id] and stop_flags[user_id][file_num]:
+                    stopped = True
+                    break
+
+                batch_links = links[i:i + batch_size]
+                futures = {executor.submit(check_link, link): link for link in batch_links}
+
+                for future in futures:
+                    if user_id in stop_flags and file_num in stop_flags[user_id] and stop_flags[user_id][file_num]:
+                        stopped = True
+                        break
+
+                    result = future.result()
+
+                    with processing_status[status_key]['lock']:
+                        processing_status[status_key]['processed'] += 1
+
+                        if result:
+                            processing_status[status_key]['live'] += 1
+                            live_idx = processing_status[status_key]['live']
+
+                            # توليد الكود فوراً وإرساله لطابور الإرسال بدون تعطيل عملية الفحص
+                            try:
+                                code = generate_gateway_code(result, live_idx, file_num)
+                                file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
+                                with open(file_name, 'w', encoding='utf-8') as f:
+                                    f.write(code)
+                                
+                                caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔗 Link: <code>{result['link']}</code>
 ━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr""",
-                                parse_mode="HTML"
-                            )
-                        os.remove(file_name)
-                        time.sleep(0.5)
-                    except Exception as e:
-                        print(f"Error sending file: {e}")
-                else:
-                    processing_status[f"{user_id}_{file_num}"]['dead'] += 1
-                
-                processed = processing_status[f"{user_id}_{file_num}"]['processed']
-                live = processing_status[f"{user_id}_{file_num}"]['live']
-                dead = processing_status[f"{user_id}_{file_num}"]['dead']
-                progress = int((processed / total) * 100)
-                
-                if processed % 5 == 0 or processed == total:
-                    bar_length = 20
-                    filled = int((progress / 100) * bar_length)
-                    bar = '█' * filled + '░' * (bar_length - filled)
-                    
-                    text = f"""📊 <b>File #{file_num} - Scanning links...</b>
+Dev: @nnunrr"""
+                                # إضافة الملف لطابور الإرسال المباشر
+                                send_queue.put((chat_id, file_name, caption))
+                            except Exception as e:
+                                print(f"Error preparing file: {e}")
+                        else:
+                            processing_status[status_key]['dead'] += 1
+
+                        processed = processing_status[status_key]['processed']
+                        live = processing_status[status_key]['live']
+                        dead = processing_status[status_key]['dead']
+                        
+                        # تحديث الرسالة كل 20 رابط لمنع التلجرام من إعطاء FloodWait للبوت
+                        if processed % 20 == 0 or processed == total:
+                            progress = int((processed / total) * 100)
+                            bar_length = 20
+                            filled = int((progress / 100) * bar_length)
+                            bar = '█' * filled + '░' * (bar_length - filled)
+                            
+                            text = f"""📊 <b>File #{file_num} - Scanning links...</b>
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {total}
 ✅ Live: {live}
@@ -667,15 +706,16 @@ Dev: @nnunrr""",
 ━━━━━━━━━━━━━━━━━━
 ⏱️ Checked {processed} of {total}
 🛑 /stop {file_num} to stop this file"""
-                    
-                    try:
-                        bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                    except:
-                        pass
-            
-            time.sleep(0.3)
-        
-        status = processing_status[f"{user_id}_{file_num}"]
+                            
+                            try:
+                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+                            except:
+                                pass
+                
+                # تفريغ الذاكرة بانتظام لمنع امتلائها عند الوصول للأرقام الضخمة
+                cleanup_memory()
+
+        status = processing_status[status_key]
         
         if stopped:
             final_text = f"""🛑 <b>File #{file_num} Stopped!</b>
@@ -712,8 +752,8 @@ Dev: @nnunrr"""
         except:
             bot.send_message(chat_id, final_text, parse_mode="HTML")
         
-        if f"{user_id}_{file_num}" in processing_status:
-            del processing_status[f"{user_id}_{file_num}"]
+        if status_key in processing_status:
+            del processing_status[status_key]
         cleanup_memory()
             
     except Exception as e:
@@ -878,11 +918,11 @@ def unblock_user(message):
     except:
         bot.reply_to(message, "Usage: /unblock2 [user_id]")
 
-# === تشغيل البوت ===
+# === تشغيل البوت المستمر ===
 print('✅ Bot is running...')
 while True:
     try:
-        bot.infinity_polling(none_stop=True, interval=0, timeout=20)
+        bot.infinity_polling(none_stop=True, interval=0, timeout=60, long_polling_timeout=60)
     except Exception as e:
         print(f'❌ Error: {e}')
-        time.sleep(5)
+        time.sleep(3)
