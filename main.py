@@ -10,8 +10,7 @@ import html
 from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from queue import Queue, Empty
+from queue import Queue
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -38,19 +37,6 @@ if not os.path.exists('blockusers.txt'):
 def cleanup_memory():
     gc.collect()
 
-# إعداد جلسة لكل خيط
-thread_local = threading.local()
-
-def get_session():
-    if not hasattr(thread_local, "session"):
-        session = requests.Session()
-        retries = Retry(total=2, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
-        adapter = HTTPAdapter(max_retries=retries, pool_connections=5, pool_maxsize=5)
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
-        thread_local.session = session
-    return thread_local.session
-
 # Worker للإرسال
 def send_worker():
     while True:
@@ -72,7 +58,7 @@ def send_worker():
         finally:
             send_queue.task_done()
 
-# 2 عامل إرسال فقط
+# 2 عامل إرسال
 for _ in range(2):
     threading.Thread(target=send_worker, daemon=True).start()
 
@@ -577,8 +563,7 @@ def check_link(link):
         if not link.startswith(("http://", "https://")):
             return None
 
-        session = get_session()
-        r = session.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=8, allow_redirects=True)
+        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=8, allow_redirects=True)
         if r.status_code != 200:
             return None
 
@@ -702,53 +687,39 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # المعالجة بدفعات صغيرة - مستقرة للملفات الكبيرة
-        batch_size = 20
-        max_workers = 10
-        
-        for i in range(0, total, batch_size):
+        # المعالجة بخيط واحد فقط - الأكثر استقراراً
+        for idx, link in enumerate(links):
             if stop_event.is_set():
                 break
 
-            batch_links = links[i:i + batch_size]
-            
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_link = {executor.submit(check_link, link): link for link in batch_links}
-                
-                for future in as_completed(future_to_link, timeout=30):
-                    if stop_event.is_set():
-                        break
-                    
+            # فحص الرابط مباشرة بدون خيوط
+            result = check_link(link)
+
+            with progress['lock']:
+                progress['processed'] += 1
+
+                if result:
+                    progress['live'] += 1
+                    live_idx = progress['live']
                     try:
-                        result = future.result(timeout=8)
-                    except Exception:
-                        result = None
-
-                    with progress['lock']:
-                        progress['processed'] += 1
-
-                        if result:
-                            progress['live'] += 1
-                            live_idx = progress['live']
-                            try:
-                                code = generate_gateway_code(result, live_idx, file_num)
-                                file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
-                                with open(file_name, 'w', encoding='utf-8') as f:
-                                    f.write(code)
-                                caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
+                        code = generate_gateway_code(result, live_idx, file_num)
+                        file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
+                        with open(file_name, 'w', encoding='utf-8') as f:
+                            f.write(code)
+                        caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔗 Link: <code>{result['link']}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr"""
-                                send_queue.put((chat_id, file_name, caption))
-                            except Exception as e:
-                                print(f"Error preparing file: {e}")
-                        else:
-                            progress['dead'] += 1
+                        send_queue.put((chat_id, file_name, caption))
+                    except Exception as e:
+                        print(f"Error preparing file: {e}")
+                else:
+                    progress['dead'] += 1
 
-            del batch_links
-            cleanup_memory()
-            time.sleep(0.5)  # راحة بين الدفعات
+            # تنظيف كل 100 رابط
+            if progress['processed'] % 100 == 0:
+                cleanup_memory()
 
         # إيقاف خيط التحديث
         stop_event.set()
