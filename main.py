@@ -47,7 +47,7 @@ def send_worker():
                 with open(file_path, 'rb') as f:
                     bot.send_document(chat_id, f, caption=caption, parse_mode="HTML")
                 os.remove(file_path)
-            time.sleep(0.2)
+            time.sleep(0.1)
         except Exception as e:
             print(f"Error sending: {e}")
             if os.path.exists(file_path):
@@ -56,8 +56,8 @@ def send_worker():
         finally:
             send_queue.task_done()
 
-# 4 عمال إرسال
-for _ in range(4):
+# 5 عمال إرسال
+for _ in range(5):
     threading.Thread(target=send_worker, daemon=True).start()
 
 @bot.message_handler(commands=["start"])
@@ -556,22 +556,12 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص رابط PayPal بدقة عالية"""
+    """فحص رابط PayPal - تسلسلي بدون خيوط"""
     try:
         if not link.startswith(("http://", "https://")):
             return None
 
-        # محاولة أولى
-        try:
-            r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, allow_redirects=True)
-        except:
-            # محاولة تانية بعد ثانية
-            time.sleep(1)
-            try:
-                r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, allow_redirects=True)
-            except:
-                return None
-        
+        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, allow_redirects=True)
         if r.status_code != 200:
             return None
 
@@ -618,11 +608,9 @@ def process_bulk_file(message):
         return
 
     try:
-        # تحميل الملف
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # قراءة الروابط
         lines = downloaded_file.decode('utf-8', errors='ignore').splitlines()
         links = [link.strip() for link in lines if link.strip()]
         del downloaded_file
@@ -664,11 +652,10 @@ def process_bulk_file(message):
             parse_mode="HTML"
         )
 
-        # خيط مستقل للتحديث كل 3 ثواني
         def update_status_loop():
             last_text = ""
             while not stop_event.is_set():
-                time.sleep(3)
+                time.sleep(2)
                 with progress['lock']:
                     processed = progress['processed']
                     live = progress['live']
@@ -700,86 +687,41 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # المعالجة المتوازية - 10 خيوط للدقة
-        max_workers = 10
-        batch_size = 20
-        
-        for i in range(0, total, batch_size):
+        # فحص تسلسلي - رابط رابط بدون أي خيوط
+        for idx, link in enumerate(links):
             if stop_event.is_set():
                 break
 
-            batch_links = links[i:i + batch_size]
-            
-            threads = []
-            results = {}
-            results_lock = threading.Lock()
-            
-            def worker(link, idx):
-                try:
-                    result = check_link(link)
-                except:
-                    result = None
-                with results_lock:
-                    results[idx] = result
-            
-            # تشغيل الخيوط
-            for idx, link in enumerate(batch_links):
-                if stop_event.is_set():
-                    break
-                t = threading.Thread(target=worker, args=(link, idx), daemon=True)
-                t.start()
-                threads.append(t)
-                
-                if len(threads) >= max_workers:
-                    for t in threads:
-                        t.join(timeout=20)
-                    threads = []
-            
-            # استنى باقي الخيوط
-            for t in threads:
-                t.join(timeout=20)
-            
-            # معالجة النتائج
-            for idx in range(len(batch_links)):
-                if stop_event.is_set():
-                    break
-                    
-                result = results.get(idx, None)
-                
-                with progress['lock']:
-                    progress['processed'] += 1
+            result = check_link(link)
 
-                    if result:
-                        progress['live'] += 1
-                        live_idx = progress['live']
-                        try:
-                            code = generate_gateway_code(result, live_idx, file_num)
-                            file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
-                            with open(file_name, 'w', encoding='utf-8') as f:
-                                f.write(code)
-                            caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
+            with progress['lock']:
+                progress['processed'] += 1
+
+                if result:
+                    progress['live'] += 1
+                    live_idx = progress['live']
+                    try:
+                        code = generate_gateway_code(result, live_idx, file_num)
+                        file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
+                        with open(file_name, 'w', encoding='utf-8') as f:
+                            f.write(code)
+                        caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔗 Link: <code>{result['link']}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr"""
-                            send_queue.put((chat_id, file_name, caption))
-                        except Exception as e:
-                            print(f"Error preparing file: {e}")
-                    else:
-                        progress['dead'] += 1
+                        send_queue.put((chat_id, file_name, caption))
+                    except Exception as e:
+                        print(f"Error preparing file: {e}")
+                else:
+                    progress['dead'] += 1
 
-            # تنظيف
-            del batch_links
-            del results
-            del threads
-            cleanup_memory()
-            time.sleep(0.3)
+            if progress['processed'] % 50 == 0:
+                cleanup_memory()
 
-        # إيقاف خيط التحديث
         stop_event.set()
         updater.join(timeout=1)
 
-        # الرسالة النهائية
         with progress['lock']:
             processed = progress['processed']
             live = progress['live']
