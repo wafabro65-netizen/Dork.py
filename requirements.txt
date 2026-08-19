@@ -1,5 +1,6 @@
 pyTelegramBotAPI
 requests
-requests-toolbelt
 user-agent
-psutil
+requests-toolbelt
+urllib3
+fake-useragent
