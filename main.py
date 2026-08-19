@@ -11,6 +11,7 @@ from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 from queue import Queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -556,12 +557,12 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص رابط PayPal - تسلسلي بدون خيوط"""
+    """فحص رابط PayPal"""
     try:
         if not link.startswith(("http://", "https://")):
             return None
 
-        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, allow_redirects=True)
+        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, allow_redirects=True)
         if r.status_code != 200:
             return None
 
@@ -655,7 +656,7 @@ def process_bulk_file(message):
         def update_status_loop():
             last_text = ""
             while not stop_event.is_set():
-                time.sleep(2)
+                time.sleep(3)
                 with progress['lock']:
                     processed = progress['processed']
                     live = progress['live']
@@ -687,37 +688,45 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # فحص تسلسلي - رابط رابط بدون أي خيوط
-        for idx, link in enumerate(links):
-            if stop_event.is_set():
-                break
+        # استخدام ThreadPoolExecutor مع as_completed بدون timeout
+        # 8 خيوط فقط للتوازن
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_link = {executor.submit(check_link, link): link for link in links}
+            
+            for future in as_completed(future_to_link):
+                if stop_event.is_set():
+                    break
+                
+                link = future_to_link[future]
+                try:
+                    result = future.result()
+                except Exception:
+                    result = None
 
-            result = check_link(link)
+                with progress['lock']:
+                    progress['processed'] += 1
 
-            with progress['lock']:
-                progress['processed'] += 1
-
-                if result:
-                    progress['live'] += 1
-                    live_idx = progress['live']
-                    try:
-                        code = generate_gateway_code(result, live_idx, file_num)
-                        file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
-                        with open(file_name, 'w', encoding='utf-8') as f:
-                            f.write(code)
-                        caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
+                    if result:
+                        progress['live'] += 1
+                        live_idx = progress['live']
+                        try:
+                            code = generate_gateway_code(result, live_idx, file_num)
+                            file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
+                            with open(file_name, 'w', encoding='utf-8') as f:
+                                f.write(code)
+                            caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔗 Link: <code>{result['link']}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr"""
-                        send_queue.put((chat_id, file_name, caption))
-                    except Exception as e:
-                        print(f"Error preparing file: {e}")
-                else:
-                    progress['dead'] += 1
+                            send_queue.put((chat_id, file_name, caption))
+                        except Exception as e:
+                            print(f"Error preparing file: {e}")
+                    else:
+                        progress['dead'] += 1
 
-            if progress['processed'] % 50 == 0:
-                cleanup_memory()
+                if progress['processed'] % 100 == 0:
+                    cleanup_memory()
 
         stop_event.set()
         updater.join(timeout=1)
