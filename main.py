@@ -10,10 +10,11 @@ import html
 from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
-from queue import Queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue, Empty
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import signal
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -29,7 +30,6 @@ bulk_waiting = {}
 stop_flags = {}
 processing_status = {}
 
-# طابور منفصل لإرسال المستندات والرسائل فوراً
 send_queue = Queue()
 
 if not os.path.exists('blockusers.txt'):
@@ -39,20 +39,20 @@ if not os.path.exists('blockusers.txt'):
 def cleanup_memory():
     gc.collect()
 
-# إعداد جلسة لكل خيط مع إعادة المحاولة
+# إعداد جلسة لكل خيط
 thread_local = threading.local()
 
 def get_session():
     if not hasattr(thread_local, "session"):
         session = requests.Session()
-        retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
-        adapter = HTTPAdapter(max_retries=retries, pool_connections=20, pool_maxsize=20)
+        retries = Retry(total=2, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
+        adapter = HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=10)
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         thread_local.session = session
     return thread_local.session
 
-# Worker منفصل لإرسال الملفات فوراً من الطابور بدون تعطيل الفحص
+# Worker للإرسال
 def send_worker():
     while True:
         task = send_queue.get()
@@ -64,16 +64,16 @@ def send_worker():
                 with open(file_path, 'rb') as f:
                     bot.send_document(chat_id, f, caption=caption, parse_mode="HTML")
                 os.remove(file_path)
-            time.sleep(0.5)
+            time.sleep(0.3)
         except Exception as e:
-            print(f"Error sending document: {e}")
+            print(f"Error sending: {e}")
             if os.path.exists(file_path):
                 try: os.remove(file_path)
                 except: pass
         finally:
             send_queue.task_done()
 
-# تشغيل 3 عمال إرسال
+# 3 عمال إرسال
 for _ in range(3):
     threading.Thread(target=send_worker, daemon=True).start()
 
@@ -568,18 +568,18 @@ def bulk_done(message):
 def handle_bulk_file(message):
     user_id = message.from_user.id
     if user_id in bulk_waiting:
-        threading.Thread(target=process_bulk_file, args=(message,)).start()
+        threading.Thread(target=process_bulk_file, args=(message,), daemon=True).start()
     else:
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص رابط PayPal مع إعادة استخدام الجلسة لكل خيط"""
+    """فحص رابط PayPal مع جلسة مخصصة لكل خيط"""
     try:
         if not link.startswith(("http://", "https://")):
             return None
 
         session = get_session()
-        r = session.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        r = session.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, allow_redirects=True)
         if r.status_code != 200:
             return None
 
@@ -621,11 +621,16 @@ def process_bulk_file(message):
         return
 
     try:
+        # تحميل الملف
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
+        # قراءة الروابط
         lines = downloaded_file.decode('utf-8', errors='ignore').splitlines()
         links = [link.strip() for link in lines if link.strip()]
+        del downloaded_file
+        del lines
+        cleanup_memory()
 
         if not links:
             bot.reply_to(message, "❌ File is empty.")
@@ -644,8 +649,7 @@ def process_bulk_file(message):
             'processed': 0,
             'live': 0,
             'dead': 0,
-            'lock': threading.Lock(),
-            'update_counter': 0
+            'lock': threading.Lock()
         }
         status_key = f"{user_id}_{file_num}"
         processing_status[status_key] = progress
@@ -663,16 +667,24 @@ def process_bulk_file(message):
             parse_mode="HTML"
         )
 
-        def update_message():
-            with progress['lock']:
-                processed = progress['processed']
-                live = progress['live']
-                dead = progress['dead']
-                percent = int((processed / total) * 100) if total > 0 else 0
-                bar_length = 20
-                filled = int((percent / 100) * bar_length)
-                bar = '█' * filled + '░' * (bar_length - filled)
-                text = f"""📊 <b>File #{file_num} - Scanning links...</b>
+        # خيط مستقل للتحديث كل 3 ثواني
+        def update_status_loop():
+            last_text = ""
+            while not stop_event.is_set():
+                time.sleep(3)
+                with progress['lock']:
+                    processed = progress['processed']
+                    live = progress['live']
+                    dead = progress['dead']
+                    if processed >= total:
+                        break
+                    if processed == 0:
+                        continue
+                    percent = int((processed / total) * 100)
+                    bar_length = 20
+                    filled = int((percent / 100) * bar_length)
+                    bar = '█' * filled + '░' * (bar_length - filled)
+                    text = f"""📊 <b>File #{file_num} - Scanning links...</b>
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {total}
 ✅ Live: {live}
@@ -681,14 +693,19 @@ def process_bulk_file(message):
 ━━━━━━━━━━━━━━━━━━
 ⏱️ Checked {processed} of {total}
 🛑 /stop {file_num} to stop this file"""
-                try:
-                    bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                    time.sleep(0.2)
-                except Exception:
-                    pass
+                    if text != last_text:
+                        try:
+                            bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+                            last_text = text
+                        except Exception:
+                            pass
 
-        with ThreadPoolExecutor(max_workers=30) as executor:
-            batch_size = 50
+        updater = threading.Thread(target=update_status_loop, daemon=True)
+        updater.start()
+
+        # المعالجة المتوازية
+        batch_size = 100  # تقسيم الروابط لدفعات كبيرة
+        with ThreadPoolExecutor(max_workers=50) as executor:
             for i in range(0, total, batch_size):
                 if stop_event.is_set():
                     break
@@ -696,18 +713,17 @@ def process_bulk_file(message):
                 batch_links = links[i:i + batch_size]
                 futures = {executor.submit(check_link, link): link for link in batch_links}
 
-                for future in futures:
+                for future in as_completed(futures):
                     if stop_event.is_set():
                         break
 
                     try:
-                        result = future.result()
+                        result = future.result(timeout=15)
                     except Exception:
                         result = None
 
                     with progress['lock']:
                         progress['processed'] += 1
-                        progress['update_counter'] += 1
 
                         if result:
                             progress['live'] += 1
@@ -728,21 +744,23 @@ Dev: @nnunrr"""
                         else:
                             progress['dead'] += 1
 
-                        # التحديث كل 3 روابط
-                        if progress['update_counter'] >= 3 or progress['processed'] == total:
-                            progress['update_counter'] = 0
-                            update_message()
-
+                # تنظيف بعد كل دفعة
+                del batch_links
+                del futures
                 cleanup_memory()
+                time.sleep(0.05)  # مهلة صغيرة جداً
 
-        update_message()
+        # إيقاف خيط التحديث
+        stop_event.set()
+        updater.join(timeout=1)
 
+        # الرسالة النهائية
         with progress['lock']:
             processed = progress['processed']
             live = progress['live']
             dead = progress['dead']
 
-        if stop_event.is_set() and processed < total:
+        if processed < total and stop_event.is_set():
             final_text = f"""🛑 <b>File #{file_num} Stopped!</b>
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {total}
@@ -779,6 +797,9 @@ Dev: @nnunrr"""
 
         if status_key in processing_status:
             del processing_status[status_key]
+        
+        # تنظيف نهائي
+        del links
         cleanup_memory()
 
     except Exception as e:
