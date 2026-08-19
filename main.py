@@ -14,7 +14,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue, Empty
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import signal
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -46,7 +45,7 @@ def get_session():
     if not hasattr(thread_local, "session"):
         session = requests.Session()
         retries = Retry(total=2, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504])
-        adapter = HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=10)
+        adapter = HTTPAdapter(max_retries=retries, pool_connections=5, pool_maxsize=5)
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         thread_local.session = session
@@ -64,7 +63,7 @@ def send_worker():
                 with open(file_path, 'rb') as f:
                     bot.send_document(chat_id, f, caption=caption, parse_mode="HTML")
                 os.remove(file_path)
-            time.sleep(0.3)
+            time.sleep(0.5)
         except Exception as e:
             print(f"Error sending: {e}")
             if os.path.exists(file_path):
@@ -73,8 +72,8 @@ def send_worker():
         finally:
             send_queue.task_done()
 
-# 3 عمال إرسال
-for _ in range(3):
+# 2 عامل إرسال فقط
+for _ in range(2):
     threading.Thread(target=send_worker, daemon=True).start()
 
 @bot.message_handler(commands=["start"])
@@ -573,13 +572,13 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص رابط PayPal مع جلسة مخصصة لكل خيط"""
+    """فحص رابط PayPal"""
     try:
         if not link.startswith(("http://", "https://")):
             return None
 
         session = get_session()
-        r = session.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, allow_redirects=True)
+        r = session.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=8, allow_redirects=True)
         if r.status_code != 200:
             return None
 
@@ -667,11 +666,11 @@ def process_bulk_file(message):
             parse_mode="HTML"
         )
 
-        # خيط مستقل للتحديث كل 3 ثواني
+        # خيط مستقل للتحديث كل 5 ثواني
         def update_status_loop():
             last_text = ""
             while not stop_event.is_set():
-                time.sleep(3)
+                time.sleep(5)
                 with progress['lock']:
                     processed = progress['processed']
                     live = progress['live']
@@ -703,22 +702,25 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # المعالجة المتوازية
-        batch_size = 100  # تقسيم الروابط لدفعات كبيرة
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            for i in range(0, total, batch_size):
-                if stop_event.is_set():
-                    break
+        # المعالجة بدفعات صغيرة - مستقرة للملفات الكبيرة
+        batch_size = 20
+        max_workers = 10
+        
+        for i in range(0, total, batch_size):
+            if stop_event.is_set():
+                break
 
-                batch_links = links[i:i + batch_size]
-                futures = {executor.submit(check_link, link): link for link in batch_links}
-
-                for future in as_completed(futures):
+            batch_links = links[i:i + batch_size]
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_link = {executor.submit(check_link, link): link for link in batch_links}
+                
+                for future in as_completed(future_to_link, timeout=30):
                     if stop_event.is_set():
                         break
-
+                    
                     try:
-                        result = future.result(timeout=15)
+                        result = future.result(timeout=8)
                     except Exception:
                         result = None
 
@@ -744,11 +746,9 @@ Dev: @nnunrr"""
                         else:
                             progress['dead'] += 1
 
-                # تنظيف بعد كل دفعة
-                del batch_links
-                del futures
-                cleanup_memory()
-                time.sleep(0.05)  # مهلة صغيرة جداً
+            del batch_links
+            cleanup_memory()
+            time.sleep(0.5)  # راحة بين الدفعات
 
         # إيقاف خيط التحديث
         stop_event.set()
@@ -798,7 +798,6 @@ Dev: @nnunrr"""
         if status_key in processing_status:
             del processing_status[status_key]
         
-        # تنظيف نهائي
         del links
         cleanup_memory()
 
