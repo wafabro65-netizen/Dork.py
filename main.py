@@ -203,15 +203,10 @@ def ali_al2(massege):
         r = requests.Session()
         headers = {'user-agent': user}
         res = r.get(url=f"{link}", headers=headers, timeout=15).text
-        id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res).group(1)
-        id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res).group(1)
-        nonec = re.search(r'name="give-form-hash" value="(.*?)"', res).group(1)
-        anc = re.search(r'"data-client-token":"(.*?)"', res)
-        if anc:
-            enc = re.search(r'"data-client-token":"(.*?)"', res).group(1)
-            dec = base64.b64decode(enc).decode('utf-8')
-            au = re.search(r'"accessToken":"(.*?)"', dec).group(1)
-        else:
+        
+        # استخراج البيانات بنفس طريقة check_link المحسنة
+        result = check_link(link)
+        if not result:
             bot.edit_message_text(
                 chat_id=massege.chat.id,
                 message_id=ko.message_id,
@@ -219,6 +214,11 @@ def ali_al2(massege):
                 parse_mode="HTML"
             )
             return
+        
+        id_form1 = result['id_form1']
+        id_form2 = result['id_form2']
+        nonec = result['nonec']
+        au = result['au']
     except Exception as e:
         bot.edit_message_text(
             chat_id=massege.chat.id,
@@ -557,7 +557,7 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص رابط PayPal"""
+    """فحص رابط PayPal - يدعم كل أنواع PayPal Commerce"""
     try:
         if not link.startswith(("http://", "https://")):
             return None
@@ -568,28 +568,155 @@ def check_link(link):
 
         res = r.text
         
-        id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
-        id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
-        nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
-        anc = re.search(r'"data-client-token":"(.*?)"', res)
-
-        if not all([id_form1, id_form2, nonec, anc]):
-            return None
-
-        id_form1 = id_form1.group(1)
-        id_form2 = id_form2.group(1)
-        nonec = nonec.group(1)
-        enc = anc.group(1)
+        # ============ البحث عن client token بكل الطرق الممكنة ============
+        au = None
+        enc = None
         
+        # الطريقة 1: data-client-token في HTML
+        anc1 = re.search(r'"data-client-token":"(.*?)"', res)
+        if anc1:
+            enc = anc1.group(1)
+        
+        # الطريقة 2: data-client-token='...'
+        if not enc:
+            anc2 = re.search(r"data-client-token='(.*?)'", res)
+            if anc2:
+                enc = anc2.group(1)
+        
+        # الطريقة 3: data-client-token= بدون quotes
+        if not enc:
+            anc3 = re.search(r'data-client-token=([^"\'\s>]+)', res)
+            if anc3:
+                enc = anc3.group(1)
+        
+        # الطريقة 4: clientToken في JavaScript
+        if not enc:
+            anc4 = re.search(r'clientToken["\']?\s*:\s*["\'](.*?)["\']', res)
+            if anc4:
+                enc = anc4.group(1)
+        
+        # الطريقة 5: client_token في meta tag
+        if not enc:
+            anc5 = re.search(r'name="client-token"\s+content="(.*?)"', res)
+            if anc5:
+                enc = anc5.group(1)
+        
+        # الطريقة 6: data-client-token في أي مكان
+        if not enc:
+            anc6 = re.search(r'data-client-token\s*=\s*["\'](.*?)["\']', res)
+            if anc6:
+                enc = anc6.group(1)
+        
+        if not enc:
+            return None
+        
+        # فك التشفير - ممكن يكون base64 أو عادي
         try:
             dec = base64.b64decode(enc).decode('utf-8')
-            au = re.search(r'"accessToken":"(.*?)"', dec)
-            if not au:
-                return None
-            au = au.group(1)
+            au_match = re.search(r'"accessToken":"(.*?)"', dec)
+            if au_match:
+                au = au_match.group(1)
         except:
+            au_match = re.search(r'"accessToken":"(.*?)"', enc)
+            if au_match:
+                au = au_match.group(1)
+            else:
+                au_match2 = re.search(r'accessToken["\']?\s*:\s*["\'](.*?)["\']', enc)
+                if au_match2:
+                    au = au_match2.group(1)
+        
+        if not au:
             return None
-
+        
+        # ============ البحث عن form fields بكل الطرق ============
+        id_form1 = None
+        id_form2 = None
+        nonec = None
+        
+        # give-form-id-prefix
+        m1 = re.search(r'name="give-form-id-prefix"\s+value="(.*?)"', res)
+        if not m1:
+            m1 = re.search(r"name='give-form-id-prefix'\s+value='(.*?)'", res)
+        if not m1:
+            m1 = re.search(r'name="give-form-id-prefix"\s+value=\'(.*?)\'', res)
+        if not m1:
+            m1 = re.search(r'value="(.*?)"\s+name="give-form-id-prefix"', res)
+        if not m1:
+            m1 = re.search(r'<input[^>]*give-form-id-prefix[^>]*value=["\']([^"\']*)["\']', res)
+        if not m1:
+            m1 = re.search(r'type=["\']hidden["\'][^>]*name=["\']give-form-id-prefix["\'][^>]*value=["\'](.*?)["\']', res)
+        
+        if m1:
+            id_form1 = m1.group(1)
+        
+        # give-form-id
+        m2 = re.search(r'name="give-form-id"\s+value="(.*?)"', res)
+        if not m2:
+            m2 = re.search(r"name='give-form-id'\s+value='(.*?)'", res)
+        if not m2:
+            m2 = re.search(r'name="give-form-id"\s+value=\'(.*?)\'', res)
+        if not m2:
+            m2 = re.search(r'value="(.*?)"\s+name="give-form-id"', res)
+        if not m2:
+            m2 = re.search(r'<input[^>]*give-form-id[^>]*value=["\']([^"\']*)["\']', res)
+        if not m2:
+            m2 = re.search(r'type=["\']hidden["\'][^>]*name=["\']give-form-id["\'][^>]*value=["\'](.*?)["\']', res)
+        
+        if m2:
+            id_form2 = m2.group(1)
+        
+        # give-form-hash
+        m3 = re.search(r'name="give-form-hash"\s+value="(.*?)"', res)
+        if not m3:
+            m3 = re.search(r"name='give-form-hash'\s+value='(.*?)'", res)
+        if not m3:
+            m3 = re.search(r'name="give-form-hash"\s+value=\'(.*?)\'', res)
+        if not m3:
+            m3 = re.search(r'value="(.*?)"\s+name="give-form-hash"', res)
+        if not m3:
+            m3 = re.search(r'<input[^>]*give-form-hash[^>]*value=["\']([^"\']*)["\']', res)
+        if not m3:
+            m3 = re.search(r'type=["\']hidden["\'][^>]*name=["\']give-form-hash["\'][^>]*value=["\'](.*?)["\']', res)
+        
+        if m3:
+            nonec = m3.group(1)
+        
+        # ============ طرق بديلة ============
+        if not id_form1:
+            m1_alt = re.search(r'give-form-id-prefix["\']?\s*:\s*["\'](.*?)["\']', res)
+            if m1_alt:
+                id_form1 = m1_alt.group(1)
+        
+        if not id_form2:
+            m2_alt = re.search(r'give-form-id["\']?\s*:\s*["\'](.*?)["\']', res)
+            if m2_alt:
+                id_form2 = m2_alt.group(1)
+        
+        if not nonec:
+            m3_alt = re.search(r'give-form-hash["\']?\s*:\s*["\'](.*?)["\']', res)
+            if m3_alt:
+                nonec = m3_alt.group(1)
+        
+        # ============ البحث في hidden fields ============
+        if not id_form1 or not id_form2 or not nonec:
+            hidden_fields = re.findall(r'<input[^>]*type=["\']hidden["\'][^>]*>', res)
+            for field in hidden_fields:
+                name_match = re.search(r'name=["\'](.*?)["\']', field)
+                value_match = re.search(r'value=["\'](.*?)["\']', field)
+                if name_match and value_match:
+                    name = name_match.group(1)
+                    value = value_match.group(1)
+                    if 'give-form-id-prefix' in name and not id_form1:
+                        id_form1 = value
+                    elif 'give-form-id' in name and not id_form2:
+                        id_form2 = value
+                    elif 'give-form-hash' in name and not nonec:
+                        nonec = value
+        
+        # ============ التحقق النهائي ============
+        if not all([id_form1, id_form2, nonec, au]):
+            return None
+        
         return {
             'link': link,
             'id_form1': id_form1,
