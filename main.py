@@ -11,8 +11,6 @@ from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 from queue import Queue
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 # === بيانات البوت ===
 token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
@@ -49,7 +47,7 @@ def send_worker():
                 with open(file_path, 'rb') as f:
                     bot.send_document(chat_id, f, caption=caption, parse_mode="HTML")
                 os.remove(file_path)
-            time.sleep(0.5)
+            time.sleep(0.2)
         except Exception as e:
             print(f"Error sending: {e}")
             if os.path.exists(file_path):
@@ -58,8 +56,8 @@ def send_worker():
         finally:
             send_queue.task_done()
 
-# 2 عامل إرسال
-for _ in range(2):
+# 4 عمال إرسال
+for _ in range(4):
     threading.Thread(target=send_worker, daemon=True).start()
 
 @bot.message_handler(commands=["start"])
@@ -563,11 +561,16 @@ def check_link(link):
         if not link.startswith(("http://", "https://")):
             return None
 
-        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=8, allow_redirects=True)
+        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=5, allow_redirects=True)
         if r.status_code != 200:
             return None
 
         res = r.text
+        
+        # فحص سريع
+        if 'give-form-id' not in res or 'data-client-token' not in res:
+            return None
+        
         id_form1 = re.search(r'name="give-form-id-prefix" value="(.*?)"', res)
         id_form2 = re.search(r'name="give-form-id" value="(.*?)"', res)
         nonec = re.search(r'name="give-form-hash" value="(.*?)"', res)
@@ -580,11 +583,15 @@ def check_link(link):
         id_form2 = id_form2.group(1)
         nonec = nonec.group(1)
         enc = anc.group(1)
-        dec = base64.b64decode(enc).decode('utf-8')
-        au = re.search(r'"accessToken":"(.*?)"', dec)
-        if not au:
+        
+        try:
+            dec = base64.b64decode(enc).decode('utf-8')
+            au = re.search(r'"accessToken":"(.*?)"', dec)
+            if not au:
+                return None
+            au = au.group(1)
+        except:
             return None
-        au = au.group(1)
 
         return {
             'link': link,
@@ -593,7 +600,7 @@ def check_link(link):
             'nonec': nonec,
             'au': au
         }
-    except Exception:
+    except:
         return None
 
 def process_bulk_file(message):
@@ -651,11 +658,11 @@ def process_bulk_file(message):
             parse_mode="HTML"
         )
 
-        # خيط مستقل للتحديث كل 5 ثواني
+        # خيط مستقل للتحديث كل 3 ثواني
         def update_status_loop():
             last_text = ""
             while not stop_event.is_set():
-                time.sleep(5)
+                time.sleep(3)
                 with progress['lock']:
                     processed = progress['processed']
                     live = progress['live']
@@ -687,39 +694,80 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # المعالجة بخيط واحد فقط - الأكثر استقراراً
-        for idx, link in enumerate(links):
+        # المعالجة المتوازية الآمنة
+        max_workers = 15
+        batch_size = 30
+        
+        for i in range(0, total, batch_size):
             if stop_event.is_set():
                 break
 
-            # فحص الرابط مباشرة بدون خيوط
-            result = check_link(link)
+            batch_links = links[i:i + batch_size]
+            
+            threads = []
+            results = {}
+            results_lock = threading.Lock()
+            
+            def worker(link, idx):
+                try:
+                    result = check_link(link)
+                except:
+                    result = None
+                with results_lock:
+                    results[idx] = result
+            
+            # تشغيل الخيوط
+            for idx, link in enumerate(batch_links):
+                if stop_event.is_set():
+                    break
+                t = threading.Thread(target=worker, args=(link, idx), daemon=True)
+                t.start()
+                threads.append(t)
+                
+                if len(threads) >= max_workers:
+                    for t in threads:
+                        t.join(timeout=10)
+                    threads = []
+            
+            # استنى باقي الخيوط
+            for t in threads:
+                t.join(timeout=10)
+            
+            # معالجة النتائج
+            for idx in range(len(batch_links)):
+                if stop_event.is_set():
+                    break
+                    
+                result = results.get(idx, None)
+                
+                with progress['lock']:
+                    progress['processed'] += 1
 
-            with progress['lock']:
-                progress['processed'] += 1
-
-                if result:
-                    progress['live'] += 1
-                    live_idx = progress['live']
-                    try:
-                        code = generate_gateway_code(result, live_idx, file_num)
-                        file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
-                        with open(file_name, 'w', encoding='utf-8') as f:
-                            f.write(code)
-                        caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
+                    if result:
+                        progress['live'] += 1
+                        live_idx = progress['live']
+                        try:
+                            code = generate_gateway_code(result, live_idx, file_num)
+                            file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
+                            with open(file_name, 'w', encoding='utf-8') as f:
+                                f.write(code)
+                            caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔗 Link: <code>{result['link']}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr"""
-                        send_queue.put((chat_id, file_name, caption))
-                    except Exception as e:
-                        print(f"Error preparing file: {e}")
-                else:
-                    progress['dead'] += 1
+                            send_queue.put((chat_id, file_name, caption))
+                        except Exception as e:
+                            print(f"Error preparing file: {e}")
+                    else:
+                        progress['dead'] += 1
 
-            # تنظيف كل 100 رابط
-            if progress['processed'] % 100 == 0:
-                cleanup_memory()
+            # تنظيف
+            del batch_links
+            del results
+            del threads
+            cleanup_memory()
+            time.sleep(0.2)
 
         # إيقاف خيط التحديث
         stop_event.set()
