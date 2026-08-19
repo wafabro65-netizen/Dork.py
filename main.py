@@ -688,45 +688,91 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status_loop, daemon=True)
         updater.start()
 
-        # استخدام ThreadPoolExecutor مع as_completed بدون timeout
-        # 8 خيوط فقط للتوازن
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            future_to_link = {executor.submit(check_link, link): link for link in links}
+        # ============ نظام الدفعات المتعدد الحماية ============
+        batch_size = 30
+        max_workers = 5
+        rest_time = 0.3
+        
+        for i in range(0, total, batch_size):
+            if stop_event.is_set():
+                break
             
-            for future in as_completed(future_to_link):
-                if stop_event.is_set():
-                    break
-                
-                link = future_to_link[future]
-                try:
-                    result = future.result()
-                except Exception:
-                    result = None
-
-                with progress['lock']:
-                    progress['processed'] += 1
-
-                    if result:
-                        progress['live'] += 1
-                        live_idx = progress['live']
+            batch_links = links[i:i + batch_size]
+            
+            try:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_link = {executor.submit(check_link, link): link for link in batch_links}
+                    
+                    for future in as_completed(future_to_link):
+                        if stop_event.is_set():
+                            break
+                        
                         try:
-                            code = generate_gateway_code(result, live_idx, file_num)
-                            file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
-                            with open(file_name, 'w', encoding='utf-8') as f:
-                                f.write(code)
-                            caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
+                            result = future.result()
+                        except Exception:
+                            result = None
+
+                        with progress['lock']:
+                            progress['processed'] += 1
+
+                            if result:
+                                progress['live'] += 1
+                                live_idx = progress['live']
+                                try:
+                                    code = generate_gateway_code(result, live_idx, file_num)
+                                    file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
+                                    with open(file_name, 'w', encoding='utf-8') as f:
+                                        f.write(code)
+                                    caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔗 Link: <code>{result['link']}</code>
 ━━━━━━━━━━━━━━━━━━━━
 Dev: @nnunrr"""
-                            send_queue.put((chat_id, file_name, caption))
-                        except Exception as e:
-                            print(f"Error preparing file: {e}")
-                    else:
-                        progress['dead'] += 1
-
-                if progress['processed'] % 100 == 0:
-                    cleanup_memory()
+                                    send_queue.put((chat_id, file_name, caption))
+                                except Exception as e:
+                                    print(f"Error preparing file: {e}")
+                            else:
+                                progress['dead'] += 1
+            except Exception as batch_error:
+                print(f"Batch error: {batch_error}")
+                for link in batch_links:
+                    if stop_event.is_set():
+                        break
+                    try:
+                        result = check_link(link)
+                    except:
+                        result = None
+                    
+                    with progress['lock']:
+                        progress['processed'] += 1
+                        if result:
+                            progress['live'] += 1
+                            live_idx = progress['live']
+                            try:
+                                code = generate_gateway_code(result, live_idx, file_num)
+                                file_name = f'gateway_{file_num}_{live_idx}_{user_id}.py'
+                                with open(file_name, 'w', encoding='utf-8') as f:
+                                    f.write(code)
+                                caption = f"""✅ <b>File #{file_num} - Gateway #{live_idx}</b>
+━━━━━━━━━━━━━━━━━━━━
+🔗 Link: <code>{result['link']}</code>
+━━━━━━━━━━━━━━━━━━━━
+Dev: @nnunrr"""
+                                send_queue.put((chat_id, file_name, caption))
+                            except:
+                                pass
+                        else:
+                            progress['dead'] += 1
+                    time.sleep(0.1)
+            
+            del batch_links
+            del future_to_link
+            cleanup_memory()
+            time.sleep(rest_time)
+            
+            if (i // batch_size) % 10 == 0:
+                gc.collect()
+                time.sleep(0.5)
 
         stop_event.set()
         updater.join(timeout=1)
@@ -776,10 +822,12 @@ Dev: @nnunrr"""
         
         del links
         cleanup_memory()
+        gc.collect()
 
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)[:100]}")
         cleanup_memory()
+        gc.collect()
 
 def generate_gateway_code(data, idx, file_num=1):
     return f'''# PayPal Gateway {idx} (File {file_num})
