@@ -178,12 +178,7 @@ def start(message):
     Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
     FRA.add(Yes22)
     
-    # صورة مدارة فخمة
-    photo_url = 'https://t.me/C0CCOCOvjk/9'
-    try:
-        bot.send_photo(message.chat.id, photo_url, caption=IU, parse_mode='HTML', reply_markup=FRA)
-    except:
-        safe_send_message(message.chat.id, IU)
+    safe_send_message(message.chat.id, IU, reply_markup=FRA)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'yrr')
 def feedback(call):
@@ -234,14 +229,7 @@ def back_to_start(call):
     Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
     FRA.add(Yes22)
     try:
-        from telebot.types import InputMediaPhoto
-        photo_url = 'https://t.me/C0CCOCOvjk/9'
-        bot.edit_message_media(
-            media=InputMediaPhoto(media=photo_url, caption=IU, parse_mode='HTML'),
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            reply_markup=FRA
-        )
+        bot.edit_message_text(IU, call.message.chat.id, call.message.message_id, parse_mode='HTML', reply_markup=FRA)
     except:
         pass
 
