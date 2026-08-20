@@ -28,6 +28,57 @@ if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
         f.write('')
 
+# كل ردود PayPal API
+PAYPAL_RESPONSES = [
+    'Payer cannot pay', 'INSUFFICIENT_FUNDS', 'ORDER_NOT_APPROVED',
+    'TRANSACTION_REFUSED', 'PAYER_ACTION_REQUIRED', 'INSTRUMENT_DECLINED',
+    'CARD_DECLINED', 'PAYMENT_DENIED', 'PAYER_CANNOT_PAY',
+    'EXPIRED_CARD', 'INVALID_PAYMENT_METHOD', 'DO_NOT_HONOR',
+    'ACCOUNT_CLOSED', 'LOST_OR_STOLEN', 'CVV2_FAILURE',
+    'SUSPECTED_FRAUD', 'INVALID_ACCOUNT', 'REATTEMPT_NOT_PERMITTED',
+    'ACCOUNT_BLOCKED_BY_ISSUER', 'PICKUP_CARD_SPECIAL_CONDITIONS',
+    'GENERIC_DECLINE', 'COMPLIANCE_VIOLATION', 'TRANSACTION_NOT_PERMITTED',
+    'INVALID_TRANSACTION', 'RESTRICTED_OR_INACTIVE_ACCOUNT',
+    'SECURITY_VIOLATION', 'DECLINED_DUE_TO_UPDATED_ACCOUNT',
+    'INVALID_OR_RESTRICTED_CARD', 'EXPIRED_CREDIT_CARD', 'CRYPTOGRAPHIC_FAILURE',
+    'TRANSACTION_CANNOT_BE_COMPLETED', 'DECLINED_PLEASE_RETRY',
+    'TX_ATTEMPTS_EXCEED_LIMIT', 'PAYER_ACCOUNT_LOCKED_OR_CLOSED',
+    'DECLINED', 'CHARGE', 'UNPROCESSABLE_ENTITY', 'VALIDATION_ERROR',
+    'INVALID_REQUEST', 'AUTHENTICATION_FAILURE', 'NOT_AUTHORIZED',
+    'NOT_ENABLED_FOR_CARD_PROCESSING', 'CARD_TYPE_NOT_SUPPORTED',
+    'MERCHANT_NOT_ENABLED', 'PAYEE_NOT_ENABLED_FOR_CARD_PROCESSING',
+    'INVALID_CURRENCY', 'CURRENCY_NOT_SUPPORTED', 'AMOUNT_MISMATCH',
+    'ITEM_TOTAL_MISMATCH', 'TAX_TOTAL_MISMATCH', 'SHIPPING_TOTAL_MISMATCH',
+    'HANDLING_TOTAL_MISMATCH', 'INSURANCE_TOTAL_MISMATCH', 'SHIPPING_DISCOUNT_MISMATCH',
+    'INVALID_PAYER_ID', 'INVALID_PAYEE_ID', 'INVALID_RESOURCE_ID',
+    'INVALID_PARAMETER', 'INVALID_PARAMETER_SYNTAX', 'INVALID_STRING_LENGTH',
+    'INVALID_STRING_FORMAT', 'MISSING_REQUIRED_PARAMETER', 'DUPLICATE_REQUEST_ID',
+    'DUPLICATE_INVOICE_ID', 'MAX_NUMBER_OF_PAYMENT_ATTEMPTS_EXCEEDED',
+    'PAYEE_ACCOUNT_RESTRICTED', 'PAYEE_ACCOUNT_INVALID', 'PAYEE_ACCOUNT_LOCKED_OR_CLOSED',
+    'PAYEE_BLOCKED_TRANSACTION', 'PAYER_BLOCKED_TRANSACTION', 'PAYER_ACCOUNT_RESTRICTED',
+    'PAYER_ACCOUNT_INVALID', 'UNSUPPORTED_INTENT', 'UNSUPPORTED_PAYMENT_INSTRUMENT',
+    'UNSUPPORTED_SHIPPING_TYPE', 'SHIPPING_ADDRESS_INVALID', 'SHIPPING_OPTION_NOT_SUPPORTED',
+    'MULTIPLE_SHIPPING_ADDRESS_NOT_SUPPORTED', 'MULTIPLE_SHIPPING_OPTION_SELECTED',
+    'INVALID_PICKUP_ADDRESS', 'PICKUP_ADDRESS_INVALID', 'INVALID_SHIPPING_ADDRESS',
+    'AUTHORIZATION_VOIDED', 'AUTHORIZATION_EXPIRED', 'AUTHORIZATION_DENIED',
+    'AUTHORIZATION_CAPTURED', 'CAPTURE_FULLY_REFUNDED', 'CAPTURE_PARTIALLY_REFUNDED',
+    'REFUND_NOT_PERMITTED', 'REFUND_DENIED', 'REFUND_FAILED',
+    'TRANSACTION_ALREADY_REFUNDED', 'TRANSACTION_LIMIT_EXCEEDED',
+    'BILLING_AGREEMENT_NOT_FOUND', 'BILLING_AGREEMENT_CANCELLED',
+    'BILLING_AGREEMENT_EXPIRED', 'BILLING_AGREEMENT_FAILED',
+    'INTERNAL_SERVER_ERROR', 'SERVICE_UNAVAILABLE', 'RESOURCE_NOT_FOUND',
+    'METHOD_NOT_ALLOWED', 'NOT_ACCEPTABLE', 'UNSUPPORTED_MEDIA_TYPE',
+    'RATE_LIMIT_REACHED', 'INSUFFICIENT_PERMISSIONS', 'INVALID_ACCESS_TOKEN',
+    'EXPIRED_ACCESS_TOKEN', 'MALFORMED_REQUEST', 'UNKNOWN_ERROR',
+]
+
+DEAD_RESPONSES = [
+    'invalid_client', 'Client Authentication failed', 'invalid_grant',
+    'unsupported_grant_type', 'invalid_scope', 'Create Order Failed',
+    'Invalid card format', 'No form fields', 'No au', 'No PayPal data',
+    'Connection failed', 'Decode error', 'Invalid URL', 'Error:',
+]
+
 @bot.message_handler(commands=["start"])
 def start(message):
     with open("blockusers.txt", "r") as file:
@@ -100,12 +151,15 @@ def back_to_start(call):
     FRA.add(Yes22)
     from telebot.types import InputMediaPhoto
     photo_url = 'https://t.me/C0CCOCOvjk/9'
-    bot.edit_message_media(
-        media=InputMediaPhoto(media=photo_url, caption=IU, parse_mode='HTML'),
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=FRA
-    )
+    try:
+        bot.edit_message_media(
+            media=InputMediaPhoto(media=photo_url, caption=IU, parse_mode='HTML'),
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=FRA
+        )
+    except:
+        pass
 
 # ============ كلاس PayPalCommerce ============
 class PayPalCommerce:
@@ -390,32 +444,19 @@ def ali_al2(massege):
         return
 
     try:
-        # استخدام PayPalCommerce class
         paypal = PayPalCommerce(target_url=link)
         result = paypal.Charge('4059986126444431|11|30|947')
         
-        paypal_responses = [
-            'Payer cannot pay', 'INSUFFICIENT_FUNDS', 'ORDER_NOT_APPROVED',
-            'TRANSACTION_REFUSED', 'PAYER_ACTION_REQUIRED', 'INSTRUMENT_DECLINED',
-            'CARD_DECLINED', 'PAYMENT_DENIED', 'PAYER_CANNOT_PAY',
-            'EXPIRED_CARD', 'INVALID_PAYMENT_METHOD', 'DO_NOT_HONOR',
-            'ACCOUNT_CLOSED', 'LOST_OR_STOLEN', 'CVV2_FAILURE',
-            'SUSPECTED_FRAUD', 'INVALID_ACCOUNT', 'REATTEMPT_NOT_PERMITTED',
-            'ACCOUNT_BLOCKED_BY_ISSUER', 'PICKUP_CARD_SPECIAL_CONDITIONS',
-            'GENERIC_DECLINE', 'COMPLIANCE_VIOLATION', 'TRANSACTION_NOT_PERMITTED',
-            'INVALID_TRANSACTION', 'RESTRICTED_OR_INACTIVE_ACCOUNT',
-            'SECURITY_VIOLATION', 'DECLINED_DUE_TO_UPDATED_ACCOUNT',
-            'INVALID_OR_RESTRICTED_CARD', 'EXPIRED_CREDIT_CARD', 'CRYPTOGRAPHIC_FAILURE',
-            'TRANSACTION_CANNOT_BE_COMPLETED', 'DECLINED_PLEASE_RETRY',
-            'TX_ATTEMPTS_EXCEED_LIMIT', 'PAYER_ACCOUNT_LOCKED_OR_CLOSED',
-            'DECLINED', 'CHARGE',
-        ]
-        
         is_live = False
-        for pr in paypal_responses:
+        for pr in PAYPAL_RESPONSES:
             if pr.lower() in result.lower():
                 is_live = True
                 break
+        
+        for dr in DEAD_RESPONSES:
+            if dr.lower() in result.lower():
+                bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Response:</b> {result}", parse_mode="HTML")
+                return
         
         if not is_live:
             bot.edit_message_text(chat_id=massege.chat.id, message_id=ko.message_id, text=f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Response:</b> {result}", parse_mode="HTML")
@@ -581,32 +622,13 @@ def check_single_link(link):
         paypal = PayPalCommerce(target_url=link)
         result = paypal.Charge('4059986126444431|11|30|947')
         
-        paypal_responses = [
-            'Payer cannot pay', 'INSUFFICIENT_FUNDS', 'ORDER_NOT_APPROVED',
-            'TRANSACTION_REFUSED', 'PAYER_ACTION_REQUIRED', 'INSTRUMENT_DECLINED',
-            'CARD_DECLINED', 'PAYMENT_DENIED', 'PAYER_CANNOT_PAY',
-            'EXPIRED_CARD', 'INVALID_PAYMENT_METHOD', 'DO_NOT_HONOR',
-            'ACCOUNT_CLOSED', 'LOST_OR_STOLEN', 'CVV2_FAILURE',
-            'SUSPECTED_FRAUD', 'INVALID_ACCOUNT', 'REATTEMPT_NOT_PERMITTED',
-            'ACCOUNT_BLOCKED_BY_ISSUER', 'PICKUP_CARD_SPECIAL_CONDITIONS',
-            'GENERIC_DECLINE', 'COMPLIANCE_VIOLATION', 'TRANSACTION_NOT_PERMITTED',
-            'INVALID_TRANSACTION', 'RESTRICTED_OR_INACTIVE_ACCOUNT',
-            'SECURITY_VIOLATION', 'DECLINED_DUE_TO_UPDATED_ACCOUNT',
-            'INVALID_OR_RESTRICTED_CARD', 'EXPIRED_CREDIT_CARD', 'CRYPTOGRAPHIC_FAILURE',
-            'TRANSACTION_CANNOT_BE_COMPLETED', 'DECLINED_PLEASE_RETRY',
-            'TX_ATTEMPTS_EXCEED_LIMIT', 'PAYER_ACCOUNT_LOCKED_OR_CLOSED',
-            'DECLINED', 'CHARGE',
-        ]
-        
-        dead_responses = ['Create Order Failed', 'Invalid card format', 'Error:']
-        
         is_live = False
-        for pr in paypal_responses:
+        for pr in PAYPAL_RESPONSES:
             if pr.lower() in result.lower():
                 is_live = True
                 break
         
-        for dr in dead_responses:
+        for dr in DEAD_RESPONSES:
             if dr.lower() in result.lower():
                 return {'link': link, 'live': False, 'respons': result}
         
