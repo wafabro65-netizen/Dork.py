@@ -33,7 +33,7 @@ except ImportError:
             return random.choice(self.agents)
 
 # === بيانات البوت ===
-token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
+token = '8407490230:AAEWWQvi_64s0BK5kGXn2XqU2DmYFqVx3lU'
 bot = telebot.TeleBot(token, parse_mode="HTML")
 admin = 6843321125
 myid = ['6843321125']
@@ -82,7 +82,7 @@ def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retrie
                 break
     return None
 
-def safe_send_message(chat_id, text, parse_mode="HTML", retries=3):
+def safe_send_message(chat_id, text, parse_mode="HTML", retries=3, reply_markup=None):
     for i in range(retries):
         try:
             return bot.send_message(chat_id, text, parse_mode=parse_mode)
