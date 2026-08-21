@@ -85,7 +85,7 @@ def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retrie
 def safe_send_message(chat_id, text, parse_mode="HTML", retries=3, reply_markup=None):
     for i in range(retries):
         try:
-            return bot.send_message(chat_id, text, parse_mode=parse_mode)
+            return bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
         except Exception as e:
             if "429" in str(e):
                 try:
@@ -784,7 +784,7 @@ def process_mass_file(message):
         def update_status():
             last_text = ""
             while True:
-                time.sleep(10)
+                time.sleep(30)  # تحديث كل 30 ثانية
                 try:
                     with processing_status[user_id]['lock']:
                         if processing_status[user_id].get('done', False):
@@ -798,7 +798,7 @@ def process_mass_file(message):
                         bar_length = 20
                         filled = int((percent / 100) * bar_length)
                         bar = '█' * filled + '░' * (bar_length - filled)
-                        text = f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:60] if current_url else '...'}</code>\nRespons : <code>{current_respons[:60] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop to stop"""
+                        text = f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:50] if current_url else '...'}</code>\nRespons : <code>{current_respons[:50] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop to stop"""
                         
                         if text != last_text:
                             try:
@@ -812,7 +812,7 @@ def process_mass_file(message):
         updater = threading.Thread(target=update_status, daemon=True)
         updater.start()
 
-        time.sleep(2)
+        time.sleep(3)  # راحة قبل الفحص
 
         for idx, link in enumerate(links):
             if processing_status[user_id].get('stop_flag', False):
@@ -958,14 +958,14 @@ if __name__ == '__main__':
                             f.write(code)
                         safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result['respons']}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30""")
                         os.remove(file_name)
-                        time.sleep(2)
+                        time.sleep(10)  # راحة 10 ثواني بعد كل ملف
                     except Exception as e:
                         print(f"Error sending file: {e}")
                 else:
                     processing_status[user_id]['dead'] += 1
                     processing_status[user_id]['current_respons'] = result.get('respons', 'Dead') if result else 'Dead'
             
-            time.sleep(2)
+            time.sleep(5)  # راحة 5 ثواني بين المواقع
         
         with processing_status[user_id]['lock']:
             processing_status[user_id]['done'] = True
