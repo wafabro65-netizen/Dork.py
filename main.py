@@ -774,34 +774,6 @@ def process_mass_file(message):
         if not status_msg:
             return
 
-        def update_status():
-            while True:
-                time.sleep(5)
-                try:
-                    with processing_status[user_id]['lock']:
-                        if processing_status[user_id].get('done', False):
-                            break
-                        processed = processing_status[user_id]['processed']
-                        live = processing_status[user_id]['live']
-                        dead = processing_status[user_id]['dead']
-                        current_url = processing_status[user_id]['current_url']
-                        current_respons = processing_status[user_id]['current_respons']
-                        percent = int((processed / total) * 100) if total > 0 else 0
-                        bar_length = 20
-                        filled = int((percent / 100) * bar_length)
-                        bar = '█' * filled + '░' * (bar_length - filled)
-                        text = f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:50] if current_url else '...'}</code>\nRespons : <code>{current_respons[:50] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop to stop"""
-                        
-                        try:
-                            bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                        except:
-                            pass
-                except:
-                    pass
-
-        updater = threading.Thread(target=update_status, daemon=True)
-        updater.start()
-
         for idx, link in enumerate(links):
             if processing_status[user_id].get('stop_flag', False):
                 break
@@ -953,6 +925,23 @@ if __name__ == '__main__':
                     processing_status[user_id]['dead'] += 1
                     processing_status[user_id]['current_respons'] = result.get('respons', 'Dead') if result else 'Dead'
             
+            # === تحديث فوري بعد كل موقع ===
+            try:
+                with processing_status[user_id]['lock']:
+                    processed = processing_status[user_id]['processed']
+                    live = processing_status[user_id]['live']
+                    dead = processing_status[user_id]['dead']
+                    current_url = processing_status[user_id]['current_url']
+                    current_respons = processing_status[user_id]['current_respons']
+                    percent = int((processed / total) * 100) if total > 0 else 0
+                    bar_length = 20
+                    filled = int((percent / 100) * bar_length)
+                    bar = '█' * filled + '░' * (bar_length - filled)
+                    text = f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:50] if current_url else '...'}</code>\nRespons : <code>{current_respons[:50] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop to stop"""
+                    bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+            except:
+                pass
+            
             time.sleep(3)
         
         with processing_status[user_id]['lock']:
@@ -960,8 +949,6 @@ if __name__ == '__main__':
             processed = processing_status[user_id]['processed']
             live = processing_status[user_id]['live']
             dead = processing_status[user_id]['dead']
-        
-        updater.join(timeout=2)
         
         final_text = f"""📊 <b>✅ Complete!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live (Sent): {live}\n❌ Dead: {dead}\n💯 Success Rate: {int((live/total)*100) if total > 0 else 0}%\n━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30"""
         
