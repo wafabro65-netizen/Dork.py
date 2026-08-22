@@ -37,7 +37,7 @@ except:
             return random.choice(self.agents)
 
 # === بيانات البوت ===
-token = '7327856614:AAG9fY6rjp_wPKTLNnQCgoZdzagla3h9-80'
+token = '8407490230:AAEWWQvi_64s0BK5kGXn2XqU2DmYFqVx3lU'
 bot = telebot.TeleBot(token, parse_mode="HTML")
 admin = 6843321125
 myid = ['6843321125']
