@@ -11,12 +11,16 @@ from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # === استيراد UserAgent مع fallback ===
 try:
     from fake_useragent import UserAgent
+    uu = UserAgent()
+    uu.random
     HAS_FAKE_UA = True
-except ImportError:
+except:
     HAS_FAKE_UA = False
     class SimpleUA:
         def __init__(self):
@@ -48,7 +52,6 @@ if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
         f.write('')
 
-# === دوال آمنة ضد FloodWait ===
 def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=3):
     for i in range(retries):
         try:
@@ -85,7 +88,12 @@ def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retrie
 def safe_send_message(chat_id, text, parse_mode="HTML", retries=3, reply_markup=None):
     for i in range(retries):
         try:
-            return bot.send_message(chat_id, text, parse_mode=parse_mode)
+            return bot.send_message(
+                chat_id,
+                text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup
+            )
         except Exception as e:
             if "429" in str(e):
                 try:
@@ -98,7 +106,6 @@ def safe_send_message(chat_id, text, parse_mode="HTML", retries=3, reply_markup=
                 break
     return None
 
-# كل ردود PayPal API
 PAYPAL_RESPONSES = [
     'Payer cannot pay', 'INSUFFICIENT_FUNDS', 'ORDER_NOT_APPROVED',
     'TRANSACTION_REFUSED', 'PAYER_ACTION_REQUIRED', 'INSTRUMENT_DECLINED',
@@ -189,9 +196,15 @@ def feedback(call):
     Atty.add(back)
     YTT = f'''Welcome {userr} Send your message and the admin will respond.'''
     try:
-        bot.edit_message_caption(chat_id=call.message.chat.id, message_id=call.message.message_id, caption=YTT, parse_mode='HTML', reply_markup=Atty)
-    except:
-        pass
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=YTT,
+            parse_mode='HTML',
+            reply_markup=Atty
+        )
+    except Exception as e:
+        print(f"Feedback error: {e}")
     waiting_users[user_id] = True
 
 @bot.message_handler(func=lambda m: m.from_user.id in waiting_users)
@@ -230,8 +243,8 @@ def back_to_start(call):
     FRA.add(Yes22)
     try:
         bot.edit_message_text(IU, call.message.chat.id, call.message.message_id, parse_mode='HTML', reply_markup=FRA)
-    except:
-        pass
+    except Exception as e:
+        print(f"Back error: {e}")
 
 # ============ كلاس PayPalCommerce ============
 class PayPalCommerce:
@@ -270,8 +283,8 @@ class PayPalCommerce:
             self._extract_client_id(html)
             self._extract_form_data(html)
             self._extract_ajax_url(html)
-        except:
-            pass
+        except Exception as e:
+            print(f"Init error: {e}")
 
     def _extract_client_id(self, html):
         patterns = [r'client-id="([^"]+)"', r'client_id["\']?\s*[:=]\s*["\']([^"\']+)', r'data-client-id="([^"]+)"', r'clientId["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{20,})', r'paypal_client_id["\']?\s*[:=]\s*["\']([^"\']+)', r'PAYPAL_CLIENT_ID["\']?\s*[:=]\s*["\']([^"\']+)']
@@ -317,8 +330,8 @@ class PayPalCommerce:
             if response.status_code == 200:
                 self.access_token = response.json().get('access_token')
                 return self.access_token
-        except:
-            pass
+        except Exception as e:
+            print(f"Access token error: {e}")
         return None
 
     def _get_client_token(self):
@@ -343,7 +356,8 @@ class PayPalCommerce:
                     except:
                         pass
             return None
-        except:
+        except Exception as e:
+            print(f"Client token error: {e}")
             return None
 
     def _create_order(self):
@@ -1021,13 +1035,7 @@ def unblock_user(message):
 
 # === تشغيل البوت ===
 print('✅ Bot is running...')
-while True:
-    try:
-        bot.infinity_polling(none_stop=True, interval=0, timeout=60, long_polling_timeout=60)
-    except Exception as e:
-        if "409" in str(e):
-            print("⏳ Conflict, waiting 10s...")
-            time.sleep(10)
-        else:
-            print(f'❌ Error: {e}')
-            time.sleep(5)
+try:
+    bot.infinity_polling(none_stop=True, interval=0, timeout=60, long_polling_timeout=60)
+except Exception as e:
+    print(f'❌ Error: {e}')
