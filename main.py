@@ -7,6 +7,7 @@ from telebot.types import LabeledPrice
 from datetime import datetime, timedelta
 import os
 import html
+import traceback
 from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
@@ -37,6 +38,45 @@ except:
         def random(self):
             return random.choice(self.agents)
 
+# === الإيموجي المميز ===
+PREMIUM_EMOJI_IDS = {
+    "🚀": "5195033767969839232",
+    "🤖": "6039619012051082706",
+    "💎": "6039601162167000043",
+    "⭐": "6034999602925542852",
+    "✅": "6034891730526935918",
+    "❌": "6039615816595414817",
+    "📌": "6039389463228981149",
+    "👥": "6046639187636003094",
+    "👤": "6041709716231429926",
+    "🦾": "6042051651462766312",
+    "⚡": "6037229996622225123",
+    "🌟": "5956369596528204273",
+    "😳": "5900230031757547198",
+    "😂": "6026036006178789152",
+    "💲": "5929335569128623821",
+    "🎺": "5929509352095354418",
+    "📎": "5926906120877640711",
+    "👁": "5976794472418121581",
+    "💀": "5976323628038363401",
+    "💰": "4983539296163070766",
+    "🛑": "6039615816595414817",
+    "🔥": "5424972470023104089",
+    "🏦": "5332455502917949981",
+    "⏱": "5382194935057372936",
+    "💳": "5445353829304387411",
+}
+
+def premium_emoji(text):
+    if not text:
+        return text
+    result = text
+    sorted_emojis = sorted(PREMIUM_EMOJI_IDS.keys(), key=len, reverse=True)
+    for emoji in sorted_emojis:
+        doc_id = PREMIUM_EMOJI_IDS[emoji]
+        result = result.replace(emoji, f'<tg-emoji emoji-id="{doc_id}">{emoji}</tg-emoji>')
+    return result
+
 # === بيانات البوت ===
 token = '8407490230:AAEWWQvi_64s0BK5kGXn2XqU2DmYFqVx3lU'
 bot = telebot.TeleBot(token, parse_mode="HTML")
@@ -53,6 +93,52 @@ if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
         f.write('')
 
+# === دالة إرسال ملف آمنة ===
+def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retries=3):
+    """إرسال ملف بأمان مع التحقق من النوع"""
+    for i in range(retries):
+        try:
+            # تحويل dict إلى string إذا لزم
+            if isinstance(file_path, dict):
+                if 'file_path' in file_path:
+                    file_path = file_path['file_path']
+                elif 'file_id' in file_path:
+                    file_path = file_path['file_id']
+                else:
+                    print(f"❌ Cannot extract path from dict: {file_path}")
+                    return None
+            
+            # تأكد إنه string
+            file_path = str(file_path)
+            
+            # تحقق من وجود الملف
+            if not os.path.exists(file_path):
+                print(f"❌ File not found: {file_path}")
+                return None
+            
+            # إرسال الملف
+            with open(file_path, 'rb') as f:
+                return bot.send_document(
+                    chat_id=chat_id,
+                    document=f,
+                    caption=caption,
+                    parse_mode=parse_mode
+                )
+                
+        except Exception as e:
+            if "429" in str(e):
+                try:
+                    wait_time = int(str(e).split("retry after ")[1].split(")")[0]) if "retry after" in str(e) else 30
+                except:
+                    wait_time = 30
+                print(f"⏳ FloodWait (send): {wait_time}s")
+                time.sleep(min(wait_time, 60))
+            else:
+                print(f"❌ Error sending document: {e}")
+                print(traceback.format_exc())
+                break
+    return None
+
 def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=3):
     for i in range(retries):
         try:
@@ -64,23 +150,6 @@ def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=3):
                 except:
                     wait_time = 30
                 print(f"⏳ FloodWait (edit): {wait_time}s")
-                time.sleep(min(wait_time, 60))
-            else:
-                break
-    return None
-
-def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retries=3):
-    for i in range(retries):
-        try:
-            with open(file_path, 'rb') as f:
-                return bot.send_document(chat_id, f, caption=caption, parse_mode=parse_mode)
-        except Exception as e:
-            if "429" in str(e):
-                try:
-                    wait_time = int(str(e).split("retry after ")[1].split(")")[0]) if "retry after" in str(e) else 30
-                except:
-                    wait_time = 30
-                print(f"⏳ FloodWait (send): {wait_time}s")
                 time.sleep(min(wait_time, 60))
             else:
                 break
@@ -158,32 +227,34 @@ DEAD_RESPONSES = [
     'name', 'UserAgent', 'ImportError', 'Expecting value',
 ]
 
+# === أمر البداية ===
 @bot.message_handler(commands=["start"])
 def start(message):
     with open("blockusers.txt", "r") as file:
         blocked = file.read().splitlines()
     if str(message.from_user.id) in blocked:
-        safe_send_message(message.chat.id, 'The admin has blocked you due to your negative behavior.')
+        safe_send_message(message.chat.id, premium_emoji('❌ The admin has blocked you due to your negative behavior.'))
         return 
     
     user_id = message.from_user.id
     userr = message.from_user.first_name
     username = message.from_user.username or "No Username"
 
-    IU = f'''[⚡] 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐓𝐨 𝐂𝐚𝐫𝐝 𝐂𝐡𝐞𝐜𝐤𝐞𝐫 𝐁𝐨𝐭 🌟
-[⚡] 𝐍𝐚𝐦𝐞: {userr}
-[⚡] 𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞: @{username}
-[⚡] 𝐈𝐃: <code>{user_id}</code>
+    IU = premium_emoji(f'''⚡ 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐓𝐨 𝐂𝐚𝐫𝐝 𝐂𝐡𝐞𝐜𝐤𝐞𝐫 𝐁𝐨𝐭 🌟
 - - - - - - - - - - - - - - - - - - - - - -
-[⚡] PayPal Gateway >> /paypal 
-[⚡] Mass Extract >> /mass
-[⚡] Send Feedback >> Button Below
+👤 𝐍𝐚𝐦𝐞: {userr}
+📌 𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞: @{username}
+🆔 𝐈𝐃: <code>{user_id}</code>
 - - - - - - - - - - - - - - - - - - - - - -
-[⚡] 𝐁𝐨𝐭 𝐁𝐲: @FAWZY30
-[⚡] 𝐃𝐞𝐯 𝐁𝐲: Wafa.'''
+💳 PayPal Gateway >> /paypal 
+📁 Mass Extract >> /mass
+📩 Send Feedback >> Button Below
+- - - - - - - - - - - - - - - - - - - - - -
+🤖 𝐁𝐨𝐭 𝐁𝐲: @FAWZY30
+💎 𝐃𝐞𝐯 𝐁𝐲: Wafa''')
     
     FRA = types.InlineKeyboardMarkup(row_width=2)
-    Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
+    Yes22 = types.InlineKeyboardButton('📩 Submit Feedback to Owner', callback_data='yrr')
     FRA.add(Yes22)
     
     safe_send_message(message.chat.id, IU, reply_markup=FRA)
@@ -193,9 +264,9 @@ def feedback(call):
     user_id = call.from_user.id
     userr = call.from_user.first_name
     Atty = types.InlineKeyboardMarkup(row_width=1)
-    back = types.InlineKeyboardButton("Back", callback_data="start")
+    back = types.InlineKeyboardButton("🔙 Back", callback_data="start")
     Atty.add(back)
-    YTT = f'''Welcome {userr} Send your message and the admin will respond.'''
+    YTT = premium_emoji(f'''📩 Welcome {userr} Send your message and the admin will respond.''')
     try:
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -213,24 +284,24 @@ def get_user_msg(message):
     user_id = message.from_user.id
     name = message.from_user.first_name
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("Reply", callback_data=f"reply_{user_id}"))
-    safe_send_message(OWNER_ID, f"New Message\n\nFrom: {name}\nID: {user_id}\nMessage: {message.text}", reply_markup=kb)
+    kb.add(types.InlineKeyboardButton("📩 Reply", callback_data=f"reply_{user_id}"))
+    safe_send_message(OWNER_ID, premium_emoji(f"📩 New Message\n\n👤 From: {name}\n🆔 ID: {user_id}\n💬 Message: {message.text}"), reply_markup=kb)
     kb2 = types.InlineKeyboardMarkup()
-    kb2.add(types.InlineKeyboardButton("Send another message", callback_data="yrr"))
-    safe_send_message(user_id, "Your message has been sent.", reply_markup=kb2)
+    kb2.add(types.InlineKeyboardButton("📩 Send another message", callback_data="yrr"))
+    safe_send_message(user_id, premium_emoji("✅ Your message has been sent."), reply_markup=kb2)
     waiting_users.pop(user_id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("reply_"))
 def start_reply(call):
     user_id = int(call.data.split("_")[1])
     reply_mode[call.from_user.id] = user_id
-    safe_send_message(call.from_user.id, "Write your reply now:")
+    safe_send_message(call.from_user.id, premium_emoji("📩 Write your reply now:"))
 
 @bot.message_handler(func=lambda m: m.from_user.id == OWNER_ID and m.from_user.id in reply_mode)
 def send_reply(message):
     user_id = reply_mode[message.from_user.id]
-    safe_send_message(user_id, f"Admin response:\n\n{message.text}")
-    safe_send_message(OWNER_ID, "Reply sent.")
+    safe_send_message(user_id, premium_emoji(f"📩 Admin response:\n\n{message.text}"))
+    safe_send_message(OWNER_ID, premium_emoji("✅ Reply sent."))
     reply_mode.pop(message.from_user.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "start")
@@ -238,16 +309,16 @@ def back_to_start(call):
     user_id = call.from_user.id
     userr = call.from_user.first_name
     username = call.from_user.username or "No Username"
-    IU = f'''[⚡] 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐓𝐨 𝐂𝐚𝐫𝐝 𝐂𝐡𝐞𝐜𝐤𝐞𝐫 𝐁𝐨𝐭 🌟\n[⚡] 𝐍𝐚𝐦𝐞: {userr}\n[⚡] 𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞: @{username}\n[⚡] 𝐈𝐃: <code>{user_id}</code>'''
+    IU = premium_emoji(f'''⚡ 𝐖𝐞𝐥𝐜𝐨𝐦𝐞 𝐓𝐨 𝐂𝐚𝐫𝐝 𝐂𝐡𝐞𝐜𝐤𝐞𝐫 𝐁𝐨𝐭 🌟\n- - - - - - - - - - - - - - - - - - - - - -\n👤 𝐍𝐚𝐦𝐞: {userr}\n📌 𝐔𝐬𝐞𝐫𝐧𝐚𝐦𝐞: @{username}\n🆔 𝐈𝐃: <code>{user_id}</code>''')
     FRA = types.InlineKeyboardMarkup(row_width=2)
-    Yes22 = types.InlineKeyboardButton('Submit Feedback to Owner', callback_data='yrr')
+    Yes22 = types.InlineKeyboardButton('📩 Submit Feedback to Owner', callback_data='yrr')
     FRA.add(Yes22)
     try:
         bot.edit_message_text(IU, call.message.chat.id, call.message.message_id, parse_mode='HTML', reply_markup=FRA)
     except Exception as e:
         print(f"Back error: {e}")
 
-# ============ كلاس PayPalLinkTester الجديد ============
+# ============ كلاس PayPalLinkTester ============
 class PayPalLinkTester:
     def __init__(self, target_url):
         self.first_name = ["James", "John", "Robert", "Michael", "William"]
@@ -784,10 +855,10 @@ def ali_al2(massege):
     with open("blockusers.txt", "r") as file:
         blocked = file.read().splitlines()
     if str(massege.from_user.id) in blocked:
-        safe_send_message(massege.chat.id, 'The admin has blocked you.')
+        safe_send_message(massege.chat.id, premium_emoji('❌ The admin has blocked you.'))
         return
 
-    ko = safe_send_message(massege.chat.id, "- The gate is being withdrawn ...")
+    ko = safe_send_message(massege.chat.id, premium_emoji("⏳ - The gate is being withdrawn ..."))
     if not ko:
         return
     time.sleep(1)
@@ -795,22 +866,22 @@ def ali_al2(massege):
     try:
         parts = massege.text.split(maxsplit=1)
         if len(parts) != 2:
-            safe_edit_message(massege.chat.id, ko.message_id, '''- Please send the link like this:\n\n<code>/paypal https://xxxxxxx.xxx/xxxx</code>''')
+            safe_edit_message(massege.chat.id, ko.message_id, premium_emoji('''💡 - Please send the link like this:\n\n<code>/paypal https://xxxxxxx.xxx/xxxx</code>'''))
             return
 
         link = parts[1].strip()
 
         if not link.startswith(("http://", "https://")):
-            safe_edit_message(massege.chat.id, ko.message_id, "Invalid link format ❌")
+            safe_edit_message(massege.chat.id, ko.message_id, premium_emoji("❌ Invalid link format"))
             return
 
         r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         if r.status_code != 200:
-            safe_edit_message(massege.chat.id, ko.message_id, f"Site returned status: {r.status_code} ❌")
+            safe_edit_message(massege.chat.id, ko.message_id, premium_emoji(f"❌ Site returned status: {r.status_code}"))
             return
 
         time.sleep(1)
-        safe_edit_message(massege.chat.id, ko.message_id, "Gate found ✅")
+        safe_edit_message(massege.chat.id, ko.message_id, premium_emoji("✅ Gate found"))
 
     except:
         pass
@@ -827,14 +898,15 @@ def ali_al2(massege):
         
         for dr in DEAD_RESPONSES:
             if dr.lower() in result.lower():
-                safe_edit_message(massege.chat.id, ko.message_id, f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Response:</b> {result}")
+                safe_edit_message(massege.chat.id, ko.message_id, premium_emoji(f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Response:</b> {result}"))
                 return
         
         if not is_live:
-            safe_edit_message(massege.chat.id, ko.message_id, f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Response:</b> {result}")
+            safe_edit_message(massege.chat.id, ko.message_id, premium_emoji(f"❌ <b>Dead:</b> <code>{link}</code>\n📝 <b>Response:</b> {result}"))
             return
 
-        file_name = f'gateway_{int(time.time())}.py'
+        # إنشاء ملف gateway
+        file_name = str(f'gateway_{int(time.time())}.py')
         with open(file_name, "w", encoding="utf-8") as f:
             f.write(f'''import requests, re, random, time, base64, uuid
 from fake_useragent import UserAgent
@@ -1125,11 +1197,13 @@ if __name__ == '__main__':
                 print(f'[{{noy}}] ' + P + '  >>  ' + resulti)
                 time.sleep(13)''')
         
-        safe_send_document(massege.chat.id, file_name, caption=f'''✅ <b>Live Gateway Found!</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{link}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Response:</b> <code>{result}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30''')
+        # ✅ استخدام str() للتأكد
+        safe_send_document(massege.chat.id, str(file_name), caption=premium_emoji(f'''✅ <b>Live Gateway Found!</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{link}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Response:</b> <code>{result}</code>\n━━━━━━━━━━━━━━━━━━━━\n👑 Dev: @FAWZY30'''))
         os.remove(file_name)
 
     except Exception as e:
-        safe_edit_message(massege.chat.id, ko.message_id, f"❌ Error: {str(e)[:100]}")
+        print(traceback.format_exc())
+        safe_edit_message(massege.chat.id, ko.message_id, premium_emoji(f"❌ Error: {str(e)[:100]}"))
 
 # ============ أمر mass ============
 @bot.message_handler(commands=['mass'])
@@ -1137,10 +1211,10 @@ def mass_extract_start(message):
     with open("blockusers.txt", "r") as file:
         blocked = file.read().splitlines()
     if str(message.from_user.id) in blocked:
-        safe_send_message(message.chat.id, 'The admin has blocked you.')
+        safe_send_message(message.chat.id, premium_emoji('❌ The admin has blocked you.'))
         return
 
-    msg = safe_send_message(message.chat.id, "📁 Send a .txt file with links (one link per line):")
+    msg = safe_send_message(message.chat.id, premium_emoji("📁 Send a .txt file with links (one link per line):"))
     if msg:
         bot.register_next_step_handler(msg, process_mass_file)
 
@@ -1149,9 +1223,9 @@ def stop_mass(message):
     user_id = message.from_user.id
     if user_id in processing_status:
         processing_status[user_id]['stop_flag'] = True
-        safe_send_message(message.chat.id, "🛑 Stopping...")
+        safe_send_message(message.chat.id, premium_emoji("🛑 Stopping..."))
     else:
-        safe_send_message(message.chat.id, "❌ No active process.")
+        safe_send_message(message.chat.id, premium_emoji("❌ No active process."))
 
 def check_single_link(link):
     try:
@@ -1197,7 +1271,7 @@ def check_single_link(link):
 
 def process_mass_file(message):
     if not message.document:
-        safe_send_message(message.chat.id, "❌ Please send a .txt file.")
+        safe_send_message(message.chat.id, premium_emoji("❌ Please send a .txt file."))
         return
 
     try:
@@ -1207,7 +1281,7 @@ def process_mass_file(message):
         links = [link.strip() for link in links if link.strip()]
 
         if not links:
-            safe_send_message(message.chat.id, "❌ File is empty.")
+            safe_send_message(message.chat.id, premium_emoji("❌ File is empty."))
             return
 
         total = len(links)
@@ -1220,7 +1294,17 @@ def process_mass_file(message):
             'stop_flag': False, 'done': False
         }
         
-        status_msg = safe_send_message(chat_id, f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: 0\n❌ Dead: 0\n⏳ Progress: 0% ░░░░░░░░░░░░░░░░░░░░\nUrl : ...\nRespons : ...\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked 0 of {total}\n🛑 /stop to stop""")
+        status_msg = safe_send_message(chat_id, premium_emoji(f"""📊 <b>File #1 - Scanning links...</b>
+━━━━━━━━━━━━━━━━━━
+📌 Total Links: {total}
+✅ Live: 0
+❌ Dead: 0
+⏳ Progress: 0% ░░░░░░░░░░░░░░░░░░░░
+🔗 Url : ...
+💬 Respons : ...
+━━━━━━━━━━━━━━━━━━
+⏱️ Checked 0 of {total}
+🛑 /stop to stop"""))
         
         if not status_msg:
             return
@@ -1242,7 +1326,17 @@ def process_mass_file(message):
                         bar_length = 20
                         filled = int((percent / 100) * bar_length)
                         bar = '█' * filled + '░' * (bar_length - filled)
-                        text = f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:60] if current_url else '...'}</code>\nRespons : <code>{current_respons[:60] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop to stop"""
+                        text = premium_emoji(f"""📊 <b>File #1 - Scanning links...</b>
+━━━━━━━━━━━━━━━━━━
+📌 Total Links: {total}
+✅ Live: {live}
+❌ Dead: {dead}
+⏳ Progress: {percent}% {bar}
+🔗 Url : <code>{current_url[:60] if current_url else '...'}</code>
+💬 Respons : <code>{current_respons[:60] if current_respons else '...'}</code>
+━━━━━━━━━━━━━━━━━━
+⏱️ Checked {processed} of {total}
+🛑 /stop to stop""")
                         
                         if text != last_text:
                             try:
@@ -1276,6 +1370,7 @@ def process_mass_file(message):
                     processing_status[user_id]['current_respons'] = result['respons']
                     
                     try:
+                        # إنشاء كود gateway
                         code = f'''import requests, re, random, time, base64, uuid
 from fake_useragent import UserAgent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
@@ -1377,28 +1472,21 @@ class PayPal:
     def _clean_response(self, text):
         if not text:
             return "DECLINED"
-        
         text_upper = text.upper()
         text_lower = text.lower()
-        
         if '<!DOCTYPE' in text_upper or '<html' in text_upper:
             return "DECLINED"
-        
         if 'true' in text_lower or 'charge 1' in text_lower or 'charged' in text_lower or 'success' in text_lower:
             if 'error' not in text_lower:
                 return "CHARGE 1.0"
-        
         if 'insufficient' in text_lower:
             return "INSUFFICIENT_FUNDS"
-        
         if 'order_not_approved' in text_lower:
             return "Payer cannot pay for this transaction."
-        
         if 'expired_card' in text_lower:
             return "EXPIRED_CARD"
         elif 'declined' in text_lower or 'error' in text_lower:
             return "DECLINED"
-        
         return text[:80]
 
     def _create_order(self):
@@ -1406,12 +1494,10 @@ class PayPal:
             order_id = self._create_order_givewp()
             if order_id:
                 return order_id
-        
         if self.access_token:
             order_id = self._create_order_direct()
             if order_id:
                 return order_id
-        
         return None
 
     def _create_order_givewp(self):
@@ -1483,7 +1569,6 @@ class PayPal:
             result = self._approve_order_givewp(order_id)
             if result:
                 return result
-        
         if self.access_token:
             try:
                 headers = {{
@@ -1499,7 +1584,6 @@ class PayPal:
                 return response
             except:
                 pass
-        
         return None
 
     def _approve_order_givewp(self, order_id):
@@ -1565,14 +1649,23 @@ if __name__ == '__main__':
                 print(f'[{{noy}}] ' + P + '  >>  ' + resulti)
                 time.sleep(13)'''
                         
-                        file_name = f'gateway_{live_idx}.py'
+                        file_name = str(f'gateway_{live_idx}.py')
                         with open(file_name, 'w', encoding='utf-8') as f:
                             f.write(code)
-                        safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result['respons']}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30""")
+                        
+                        # ✅ استخدام str() للتأكد
+                        safe_send_document(chat_id, str(file_name), caption=premium_emoji(f"""✅ <b>Live Gateway #{live_idx}</b>
+━━━━━━━━━━━━━━━━━━━━
+🔗 Link: <code>{result['link']}</code>
+━━━━━━━━━━━━━━━━━━━━
+💬 <b>Respons:</b> <code>{result['respons']}</code>
+━━━━━━━━━━━━━━━━━━━━
+👑 Dev: @FAWZY30"""))
                         os.remove(file_name)
                         time.sleep(2)
                     except Exception as e:
                         print(f"Error sending file: {e}")
+                        print(traceback.format_exc())
                 else:
                     processing_status[user_id]['dead'] += 1
                     processing_status[user_id]['current_respons'] = result.get('respons', 'Dead') if result else 'Dead'
@@ -1587,7 +1680,14 @@ if __name__ == '__main__':
         
         updater.join(timeout=2)
         
-        final_text = f"""📊 <b>✅ Complete!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live (Sent): {live}\n❌ Dead: {dead}\n💯 Success Rate: {int((live/total)*100) if total > 0 else 0}%\n━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30"""
+        final_text = premium_emoji(f"""📊 <b>✅ Complete!</b>
+━━━━━━━━━━━━━━━━━━
+📌 Total Links: {total}
+✅ Live (Sent): {live}
+❌ Dead: {dead}
+💯 Success Rate: {int((live/total)*100) if total > 0 else 0}%
+━━━━━━━━━━━━━━━━━━
+👑 Dev: @FAWZY30""")
         
         try:
             safe_edit_message(chat_id, status_msg.message_id, final_text)
@@ -1598,26 +1698,27 @@ if __name__ == '__main__':
             del processing_status[user_id]
             
     except Exception as e:
-        safe_send_message(message.chat.id, f"❌ Error: {str(e)[:100]}")
+        print(traceback.format_exc())
+        safe_send_message(message.chat.id, premium_emoji(f"❌ Error: {str(e)[:100]}"))
 
 # === نظام الحظر ===
 @bot.message_handler(commands=['block2'])
 def block_user(message):
     if str(message.from_user.id) not in admins:
-        safe_send_message(message.chat.id, "You do not have permission.")
+        safe_send_message(message.chat.id, premium_emoji("❌ You do not have permission."))
         return
     try:
         user_id_to_block = message.text.split()[1]
         with open('blockusers.txt', 'a') as file:
             file.write(f"{user_id_to_block}\n")
-        safe_send_message(message.chat.id, f"✅ User ID {user_id_to_block} blocked.")
+        safe_send_message(message.chat.id, premium_emoji(f"✅ User ID {user_id_to_block} blocked."))
     except:
-        safe_send_message(message.chat.id, "Usage: /block2 [user_id]")
+        safe_send_message(message.chat.id, premium_emoji("💡 Usage: /block2 [user_id]"))
 
 @bot.message_handler(commands=['unblock2'])
 def unblock_user(message):
     if str(message.from_user.id) not in admins:
-        safe_send_message(message.chat.id, "You do not have permission.")
+        safe_send_message(message.chat.id, premium_emoji("❌ You do not have permission."))
         return
     try:
         user_id_to_unblock = message.text.split()[1]
@@ -1627,9 +1728,9 @@ def unblock_user(message):
             for line in lines:
                 if line.strip() != user_id_to_unblock:
                     file.write(line)
-        safe_send_message(message.chat.id, f"✅ User ID {user_id_to_unblock} unblocked.")
+        safe_send_message(message.chat.id, premium_emoji(f"✅ User ID {user_id_to_unblock} unblocked."))
     except:
-        safe_send_message(message.chat.id, "Usage: /unblock2 [user_id]")
+        safe_send_message(message.chat.id, premium_emoji("💡 Usage: /unblock2 [user_id]"))
 
 # === تشغيل البوت ===
 print('✅ Bot is running...')
@@ -1637,3 +1738,4 @@ try:
     bot.infinity_polling(none_stop=True, interval=0, timeout=60, long_polling_timeout=60)
 except Exception as e:
     print(f'❌ Error: {e}')
+    print(traceback.format_exc())
