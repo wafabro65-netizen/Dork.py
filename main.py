@@ -37,7 +37,7 @@ except:
             return random.choice(self.agents)
 
 # === بيانات البوت ===
-token = '8407490230:AAEWWQvi_64s0BK5kGXn2XqU2DmYFqVx3lU'
+token = '8689698569:AAF6GOOcFdsTnG_UXXHLqWkis0bCsIFsQJQ'
 bot = telebot.TeleBot(token, parse_mode="HTML")
 admin = 6843321125
 myid = ['6843321125']
@@ -1304,7 +1304,44 @@ def unblock_user(message):
 # ═══════════════════════ تشغيل البوت ═══════════════════════
 
 print('✅ Bot is running...')
-try:
-    bot.infinity_polling(none_stop=True, interval=0, timeout=60, long_polling_timeout=60)
-except Exception as e:
-    print(f'❌ Error: {e}')
+
+# حلقة تشغيل محصنة ضد الأخطاء
+while True:
+    try:
+        # استخدم polling عادي بدل infinity_polling
+        bot.polling(
+            none_stop=False,  # يسمح بإعادة التشغيل عند الخطأ
+            interval=0,
+            timeout=30,
+            long_polling_timeout=30
+        )
+    except KeyboardInterrupt:
+        print('🛑 Bot stopped by user')
+        break
+    except Exception as e:
+        error_msg = str(e)
+        
+        if "502" in error_msg:
+            print('⚠️ 502 Bad Gateway - Telegram server issue. Retrying in 5s...')
+            time.sleep(5)
+            continue
+        elif "409" in error_msg:
+            print('⚠️ 409 Conflict - Another instance running. Waiting 15s...')
+            time.sleep(15)
+            continue
+        elif "429" in error_msg:
+            print('⚠️ 429 Too Many Requests. Waiting 30s...')
+            time.sleep(30)
+            continue
+        elif "ReadTimeout" in error_msg or "timeout" in error_msg.lower():
+            print('⚠️ Timeout. Retrying in 3s...')
+            time.sleep(3)
+            continue
+        elif "Connection" in error_msg or "ConnectionError" in error_msg:
+            print('⚠️ Connection error. Retrying in 5s...')
+            time.sleep(5)
+            continue
+        else:
+            print(f'❌ Unexpected error: {error_msg[:100]}')
+            time.sleep(5)
+            continue
