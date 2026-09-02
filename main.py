@@ -649,10 +649,13 @@ class PayPalCommerce:
         amounts.extend(["5.00", "10.00", "18.50", "25.00", "36.50", "50.00", "100.00", "250.00", "500.00"])
         headers = {'user-agent': self.get_next_ua(), 'accept': 'application/json, text/javascript, */*; q=0.01', 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
         actions = ['give_paypal_commerce_create_order', 'give_create_order', 'create_order']
+        
         for amount in amounts:
             form_data = self.get_base_form_data()
             form_data['give-amount'] = amount
-            form_data['amount'] = amount            for action in actions:
+            form_data['amount'] = amount
+            
+            for action in actions:
                 params = {'action': action}
                 try:
                     response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies)
@@ -729,10 +732,12 @@ class PayPalCommerce:
         amounts.extend(["5.00", "10.00", "18.50", "25.00", "36.50", "50.00", "100.00", "250.00", "500.00"])
         headers = {'user-agent': self.get_next_ua(), 'accept': 'application/json, text/javascript, */*; q=0.01', 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
         actions = ['give_paypal_commerce_approve_order', 'give_approve_order', 'approve_order']
+        
         for amount in amounts:
             form_data = self.get_base_form_data()
             form_data['give-amount'] = amount
             form_data['amount'] = amount
+            
             for action in actions:
                 params = {'action': action, 'order': order_id}
                 try:
