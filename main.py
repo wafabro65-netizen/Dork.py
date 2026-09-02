@@ -62,7 +62,6 @@ if not os.path.exists('blockusers.txt'):
         f.write('')
 
 def track_error(error_type):
-    """تتبع الأخطاء المتتالية"""
     if error_type in error_counter:
         error_counter[error_type] += 1
         if error_counter[error_type] > 10:
@@ -74,12 +73,10 @@ def track_error(error_type):
             error_counter[key] = 0
 
 def reset_error_counter():
-    """إعادة تعيين عداد الأخطاء"""
     for key in error_counter:
         error_counter[key] = 0
 
 def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=10):
-    """نسخة محسنة تتعامل مع جميع أنواع الأخطاء"""
     for i in range(retries):
         try:
             result = bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, parse_mode=parse_mode)
@@ -87,7 +84,6 @@ def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=10):
             return result
         except Exception as e:
             error_str = str(e)
-            
             if "429" in error_str:
                 track_error('429')
                 try:
@@ -96,38 +92,20 @@ def safe_edit_message(chat_id, message_id, text, parse_mode="HTML", retries=10):
                     wait_time = 30
                 print(f"⏳ FloodWait (edit): {wait_time}s")
                 time.sleep(min(wait_time + 5, 65))
-                
             elif "502" in error_str or "Bad Gateway" in error_str:
                 track_error('502')
                 wait_time = 5 * (i + 1)
-                print(f"⚠️ 502 Bad Gateway (edit) - attempt {i+1}/{retries}, waiting {wait_time}s...")
+                print(f"⚠️ 502 (edit) - attempt {i+1}/{retries}, waiting {wait_time}s...")
                 time.sleep(wait_time)
-                
-            elif "500" in error_str or "Internal Server Error" in error_str:
+            elif "500" in error_str:
                 track_error('500')
                 wait_time = 3 * (i + 1)
-                print(f"⚠️ 500 Error (edit) - attempt {i+1}/{retries}, waiting {wait_time}s...")
                 time.sleep(wait_time)
-                
-            elif "Timed out" in error_str or "timeout" in error_str.lower():
-                track_error('timeout')
-                wait_time = 2 * (i + 1)
-                print(f"⚠️ Timeout (edit) - attempt {i+1}/{retries}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
-            elif "Connection" in error_str or "ConnectionError" in error_str:
-                track_error('connection')
-                wait_time = 3 * (i + 1)
-                print(f"⚠️ Connection Error (edit) - attempt {i+1}/{retries}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
             else:
-                print(f"❌ Error (edit): {error_str[:100]}")
                 break
     return None
 
 def safe_send_message(chat_id, text, parse_mode="HTML", retries=10, reply_markup=None):
-    """نسخة محسنة تتعامل مع جميع أنواع الأخطاء"""
     for i in range(retries):
         try:
             result = bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -135,47 +113,26 @@ def safe_send_message(chat_id, text, parse_mode="HTML", retries=10, reply_markup
             return result
         except Exception as e:
             error_str = str(e)
-            
             if "429" in error_str:
                 track_error('429')
                 try:
                     wait_time = int(error_str.split("retry after ")[1].split(")")[0]) if "retry after" in error_str else 30
                 except:
                     wait_time = 30
-                print(f"⏳ FloodWait (msg): {wait_time}s")
                 time.sleep(min(wait_time + 5, 65))
-                
             elif "502" in error_str or "Bad Gateway" in error_str:
                 track_error('502')
                 wait_time = 5 * (i + 1)
-                print(f"⚠️ 502 Bad Gateway (msg) - attempt {i+1}/{retries}, waiting {wait_time}s...")
                 time.sleep(wait_time)
-                
-            elif "500" in error_str or "Internal Server Error" in error_str:
+            elif "500" in error_str:
                 track_error('500')
                 wait_time = 3 * (i + 1)
-                print(f"⚠️ 500 Error (msg) - attempt {i+1}/{retries}, waiting {wait_time}s...")
                 time.sleep(wait_time)
-                
-            elif "Timed out" in error_str or "timeout" in error_str.lower():
-                track_error('timeout')
-                wait_time = 2 * (i + 1)
-                print(f"⚠️ Timeout (msg) - attempt {i+1}/{retries}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
-            elif "Connection" in error_str or "ConnectionError" in error_str:
-                track_error('connection')
-                wait_time = 3 * (i + 1)
-                print(f"⚠️ Connection Error (msg) - attempt {i+1}/{retries}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
             else:
-                print(f"❌ Error (msg): {error_str[:100]}")
                 break
     return None
 
 def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retries=10):
-    """نسخة محسنة تتعامل مع جميع أنواع الأخطاء"""
     for i in range(retries):
         try:
             with open(file_path, 'rb') as f:
@@ -184,47 +141,26 @@ def safe_send_document(chat_id, file_path, caption="", parse_mode="HTML", retrie
             return result
         except Exception as e:
             error_str = str(e)
-            
             if "429" in error_str:
                 track_error('429')
                 try:
                     wait_time = int(error_str.split("retry after ")[1].split(")")[0]) if "retry after" in error_str else 30
                 except:
                     wait_time = 30
-                print(f"⏳ FloodWait (send): {wait_time}s")
                 time.sleep(min(wait_time + 5, 65))
-                
             elif "502" in error_str or "Bad Gateway" in error_str:
                 track_error('502')
                 wait_time = 5 * (i + 1)
-                print(f"⚠️ 502 Bad Gateway (send) - attempt {i+1}/{retries}, waiting {wait_time}s...")
                 time.sleep(wait_time)
-                
-            elif "500" in error_str or "Internal Server Error" in error_str:
+            elif "500" in error_str:
                 track_error('500')
                 wait_time = 3 * (i + 1)
-                print(f"⚠️ 500 Error (send) - attempt {i+1}/{retries}, waiting {wait_time}s...")
                 time.sleep(wait_time)
-                
-            elif "Timed out" in error_str or "timeout" in error_str.lower():
-                track_error('timeout')
-                wait_time = 2 * (i + 1)
-                print(f"⚠️ Timeout (send) - attempt {i+1}/{retries}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
-            elif "Connection" in error_str or "ConnectionError" in error_str:
-                track_error('connection')
-                wait_time = 3 * (i + 1)
-                print(f"⚠️ Connection Error (send) - attempt {i+1}/{retries}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
             else:
-                print(f"❌ Error (send): {error_str[:100]}")
                 break
     return None
 
 def safe_get_file(file_id, retries=10):
-    """تحميل ملف مع معالجة الأخطاء"""
     for i in range(retries):
         try:
             result = bot.get_file(file_id)
@@ -232,36 +168,17 @@ def safe_get_file(file_id, retries=10):
             return result
         except Exception as e:
             error_str = str(e)
-            
             if "502" in error_str or "Bad Gateway" in error_str:
                 track_error('502')
-                wait_time = 5 * (i + 1)
-                print(f"⚠️ 502 in get_file - attempt {i+1}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
+                time.sleep(5 * (i + 1))
             elif "429" in error_str:
                 track_error('429')
-                wait_time = 30
-                try:
-                    wait_time = int(error_str.split("retry after ")[1].split(")")[0])
-                except:
-                    pass
-                print(f"⏳ FloodWait in get_file: {wait_time}s")
-                time.sleep(min(wait_time, 60))
-                
-            elif "500" in error_str:
-                track_error('500')
-                wait_time = 3 * (i + 1)
-                print(f"⚠️ 500 in get_file - attempt {i+1}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
+                time.sleep(30)
             else:
-                print(f"❌ Error in get_file: {error_str[:100]}")
                 break
     return None
 
 def safe_download_file(file_path, retries=10):
-    """تحميل ملف مع معالجة الأخطاء"""
     for i in range(retries):
         try:
             result = bot.download_file(file_path)
@@ -269,33 +186,61 @@ def safe_download_file(file_path, retries=10):
             return result
         except Exception as e:
             error_str = str(e)
-            
             if "502" in error_str or "Bad Gateway" in error_str:
                 track_error('502')
-                wait_time = 5 * (i + 1)
-                print(f"⚠️ 502 in download - attempt {i+1}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
+                time.sleep(5 * (i + 1))
             elif "429" in error_str:
                 track_error('429')
-                wait_time = 30
-                try:
-                    wait_time = int(error_str.split("retry after ")[1].split(")")[0])
-                except:
-                    pass
-                print(f"⏳ FloodWait in download: {wait_time}s")
-                time.sleep(min(wait_time, 60))
-                
-            elif "500" in error_str:
-                track_error('500')
-                wait_time = 3 * (i + 1)
-                print(f"⚠️ 500 in download - attempt {i+1}, waiting {wait_time}s...")
-                time.sleep(wait_time)
-                
+                time.sleep(30)
             else:
-                print(f"❌ Error in download: {error_str[:100]}")
                 break
     return None
+
+def save_progress(user_id, data):
+    try:
+        with open(f'progress_{user_id}.json', 'w') as f:
+            json.dump(data, f)
+    except:
+        pass
+
+def load_progress(user_id):
+    try:
+        if os.path.exists(f'progress_{user_id}.json'):
+            with open(f'progress_{user_id}.json', 'r') as f:
+                return json.load(f)
+    except:
+        pass
+    return None
+
+def delete_progress(user_id):
+    try:
+        if os.path.exists(f'progress_{user_id}.json'):
+            os.remove(f'progress_{user_id}.json')
+    except:
+        pass
+
+def save_live_links(user_id, links_data):
+    try:
+        with open(f'live_links_{user_id}.json', 'w') as f:
+            json.dump(links_data, f)
+    except:
+        pass
+
+def load_live_links(user_id):
+    try:
+        if os.path.exists(f'live_links_{user_id}.json'):
+            with open(f'live_links_{user_id}.json', 'r') as f:
+                return json.load(f)
+    except:
+        pass
+    return []
+
+def delete_live_links(user_id):
+    try:
+        if os.path.exists(f'live_links_{user_id}.json'):
+            os.remove(f'live_links_{user_id}.json')
+    except:
+        pass
 
 PAYPAL_RESPONSES = [
     'Payer cannot pay', 'INSUFFICIENT_FUNDS', 'ORDER_NOT_APPROVED',
@@ -431,7 +376,7 @@ def back_to_start(call):
     except Exception as e:
         print(f"Back error: {e}")
 
-# ═══════════════════════ PayPalCommerce Class (FINAL) ═══════════════════════
+# ═══════════════════════ PayPalCommerce Class ═══════════════════════
 
 class PayPalCommerce:
     def __init__(self, target_url=None):
@@ -588,7 +533,7 @@ class PayPalCommerce:
                 'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'accept-language': 'en-US,en;q=0.9'
             }
-            response = self.r.get(f'https://{self.url}{self.inurl}', headers=headers, timeout=10)
+            response = self.r.get(f'https://{self.url}{self.inurl}', headers=headers)
             self.cookies = dict(response.cookies)
             html = response.text
             if self._is_not_paypal_page(html):
@@ -645,7 +590,7 @@ class PayPalCommerce:
             return None
         try:
             headers = {'user-agent': self.get_next_ua(), 'accept': 'application/json', 'content-type': 'application/x-www-form-urlencoded'}
-            response = self.r.post('https://api-m.paypal.com/v1/oauth2/token', headers=headers, data={'grant_type': 'client_credentials'}, auth=(self.client_id, ''), timeout=10)
+            response = self.r.post('https://api-m.paypal.com/v1/oauth2/token', headers=headers, data={'grant_type': 'client_credentials'}, auth=(self.client_id, ''))
             if response.status_code == 200:
                 self.access_token = response.json().get('access_token')
                 return self.access_token
@@ -661,7 +606,7 @@ class PayPalCommerce:
             for action in actions:
                 data = {'action': action, 'form-id': self.form_data.get('give-form-id', '')}
                 headers = {'user-agent': self.get_next_ua(), 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
-                response = self.r.post(self.ajax_url, data=data, headers=headers, cookies=self.cookies, timeout=10)
+                response = self.r.post(self.ajax_url, data=data, headers=headers, cookies=self.cookies)
                 if response.status_code == 200 and response.text:
                     try:
                         json_data = response.json()
@@ -701,17 +646,16 @@ class PayPalCommerce:
         amounts = []
         if self.minimum_amount != "1.00":
             amounts.append(self.minimum_amount)
-        amounts.extend(["5.00", "10.00", "18.50", "25.00", "36.50", "50.00", "100.00"])
+        amounts.extend(["5.00", "10.00", "18.50", "25.00", "36.50", "50.00", "100.00", "250.00", "500.00"])
         headers = {'user-agent': self.get_next_ua(), 'accept': 'application/json, text/javascript, */*; q=0.01', 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
         actions = ['give_paypal_commerce_create_order', 'give_create_order', 'create_order']
         for amount in amounts:
             form_data = self.get_base_form_data()
             form_data['give-amount'] = amount
-            form_data['amount'] = amount
-            for action in actions:
+            form_data['amount'] = amount            for action in actions:
                 params = {'action': action}
                 try:
-                    response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies, timeout=10)
+                    response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies)
                     if response.status_code == 200 and response.text:
                         try:
                             json_data = response.json()
@@ -738,7 +682,7 @@ class PayPalCommerce:
         try:
             headers = {'authorization': f'Bearer {self.access_token}', 'content-type': 'application/json', 'user-agent': self.get_next_ua(), 'accept': 'application/json'}
             data = {'intent': 'CAPTURE', 'purchase_units': [{'amount': {'currency_code': self.currency, 'value': self.donation}}], 'application_context': {'shipping_preference': 'NO_SHIPPING', 'user_action': 'PAY_NOW'}}
-            response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data, timeout=10)
+            response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data)
             if response.status_code in [200, 201]:
                 response_data = response.json()
                 if 'id' in response_data:
@@ -753,7 +697,7 @@ class PayPalCommerce:
         try:
             headers = {'authorization': f'Bearer {self.client_token}', 'content-type': 'application/json', 'user-agent': self.get_next_ua(), 'accept': 'application/json'}
             data = {'intent': 'CAPTURE', 'purchase_units': [{'amount': {'currency_code': self.currency, 'value': self.donation}}]}
-            response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data, timeout=10)
+            response = self.r.post('https://api-m.paypal.com/v2/checkout/orders', headers=headers, json=data)
             if response.status_code in [200, 201]:
                 response_data = response.json()
                 if 'id' in response_data:
@@ -770,7 +714,7 @@ class PayPalCommerce:
         if self.access_token:
             try:
                 headers = {'authorization': f'Bearer {self.access_token}', 'content-type': 'application/json', 'user-agent': self.get_next_ua()}
-                response = self.r.post(f'https://api-m.paypal.com/v2/checkout/orders/{order_id}/capture', headers=headers, timeout=10)
+                response = self.r.post(f'https://api-m.paypal.com/v2/checkout/orders/{order_id}/capture', headers=headers)
                 return response
             except:
                 pass
@@ -782,7 +726,7 @@ class PayPalCommerce:
         amounts = []
         if self.minimum_amount != "1.00":
             amounts.append(self.minimum_amount)
-        amounts.extend(["5.00", "10.00", "18.50", "25.00", "36.50", "50.00", "100.00"])
+        amounts.extend(["5.00", "10.00", "18.50", "25.00", "36.50", "50.00", "100.00", "250.00", "500.00"])
         headers = {'user-agent': self.get_next_ua(), 'accept': 'application/json, text/javascript, */*; q=0.01', 'x-requested-with': 'XMLHttpRequest', 'origin': f'https://{self.url}', 'referer': f'https://{self.url}{self.inurl}', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8'}
         actions = ['give_paypal_commerce_approve_order', 'give_approve_order', 'approve_order']
         for amount in amounts:
@@ -792,7 +736,7 @@ class PayPalCommerce:
             for action in actions:
                 params = {'action': action, 'order': order_id}
                 try:
-                    response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies, timeout=10)
+                    response = self.r.post(self.ajax_url, params=params, headers=headers, data=form_data, cookies=self.cookies)
                     if response.status_code == 200:
                         return response
                 except:
@@ -867,7 +811,7 @@ class PayPalCommerce:
                 he4 = {'authorization': f'Bearer {auth_token}', 'paypal-client-metadata-id': self.client_id or '', 'user-agent': self.get_next_ua()}
                 da3 = {'payment_source': {'card': {'number': n, 'expiry': expiry, 'security_code': cvc, 'attributes': {'verification': {'method': 'SCA_WHEN_REQUIRED'}}}}, 'application_context': {'vault': False}}
                 try:
-                    confirm_res = self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{order_id}/confirm-payment-source', headers=he4, json=da3, timeout=10)
+                    confirm_res = self.r.post(f'https://cors.api.paypal.com/v2/checkout/orders/{order_id}/confirm-payment-source', headers=he4, json=da3)
                     confirm_text = confirm_res.text
                     if confirm_res.status_code == 200:
                         try:
@@ -977,7 +921,7 @@ def ali_al2(massege):
             safe_edit_message(massege.chat.id, ko.message_id, "Invalid link format ❌")
             return
 
-        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        r = requests.get(link, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code != 200:
             safe_edit_message(massege.chat.id, ko.message_id, f"Site returned status: {r.status_code} ❌")
             return
@@ -1009,9 +953,19 @@ def ali_al2(massege):
             paypal.r.close()
             return
 
+        result_data = {
+            'link': link,
+            'live': True,
+            'respons': result,
+            'id_form1': paypal.form_data.get('give-form-id-prefix', ''),
+            'id_form2': paypal.form_data.get('give-form-id', ''),
+            'nonec': paypal.form_data.get('give-form-hash', ''),
+            'au': paypal.client_token or paypal.access_token or '',
+        }
+        
         file_name = f'gateway_{int(time.time())}.py'
         with open(file_name, "w", encoding="utf-8") as f:
-            f.write(generate_gateway_code(result))
+            f.write(generate_gateway_code(result_data))
         
         safe_send_document(massege.chat.id, file_name, caption=f'''✅ <b>Live Gateway Found!</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{link}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Response:</b> <code>{result}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30''')
         os.remove(file_name)
@@ -1055,6 +1009,10 @@ def check_single_link(link):
             return {'link': link, 'live': False, 'respons': 'Invalid URL'}
         
         paypal = PayPalCommerce(target_url=link)
+        
+        if not paypal.is_valid_gateway:
+            return {'link': link, 'live': False, 'respons': 'INVALID_GATEWAY'}
+        
         result = paypal.Charge('5143772354638703|05|28|886')
         
         is_live = False
@@ -1090,7 +1048,6 @@ def check_single_link(link):
                 pass
 
 def generate_gateway_code(result):
-    """توليد كود Gateway من بيانات result"""
     return f'''import requests, re, random, time, base64
 from fake_useragent import UserAgent
 from requests_toolbelt.multipart.encoder import MultipartEncoder
@@ -1212,6 +1169,34 @@ if __name__ == '__main__':
                 print(f'[{{noy}}] ' + P + '  >>  ' + resulti)
                 time.sleep(13)'''
 
+def send_live_gateway(chat_id, result, live_idx, max_attempts=5):
+    """إرسال ملف Live مع محاولات كتير"""
+    for attempt in range(max_attempts):
+        try:
+            code = generate_gateway_code(result)
+            file_name = f'gateway_{live_idx}.py'
+            
+            with open(file_name, 'w', encoding='utf-8') as f:
+                f.write(code)
+            
+            sent = safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n🔗 Link: <code>{result['link']}</code>\n💬 <b>Respons:</b> <code>{result['respons']}</code>""")
+            
+            if sent:
+                try:
+                    os.remove(file_name)
+                except:
+                    pass
+                return True
+            else:
+                print(f"⚠️ إرسال فشل - محاولة {attempt + 1}/{max_attempts}")
+                time.sleep(5)
+                
+        except Exception as e:
+            print(f"❌ خطأ إرسال (محاولة {attempt + 1}): {e}")
+            time.sleep(5)
+    
+    return False
+
 def process_mass_file(message):
     if not message.document:
         safe_send_message(message.chat.id, "❌ Please send a .txt file.")
@@ -1239,82 +1224,57 @@ def process_mass_file(message):
         user_id = message.from_user.id
         chat_id = message.chat.id
         
+        # تحميل التقدم
+        progress = load_progress(user_id)
+        
+        if progress and progress.get('total') == total:
+            start_idx = progress.get('processed', 0)
+            live_count = progress.get('live', 0)
+            dead_count = progress.get('dead', 0)
+            print(f"🔄 استئناف من رابط {start_idx}")
+        else:
+            start_idx = 0
+            live_count = 0
+            dead_count = 0
+            delete_progress(user_id)
+        
+        # إرسال الروابط Live المحفوظة
+        saved_live_links = load_live_links(user_id)
+        
+        if saved_live_links:
+            print(f"📤 إرسال {len(saved_live_links)} روابط Live محفوظة...")
+            
+            still_failed = []
+            for live_data in saved_live_links:
+                sent_ok = send_live_gateway(chat_id, live_data, live_data.get('idx', 'x'))
+                
+                if sent_ok:
+                    print(f"✅ اتبعت: {live_data['link'][:50]}")
+                else:
+                    still_failed.append(live_data)
+            
+            if still_failed:
+                save_live_links(user_id, still_failed)
+            else:
+                delete_live_links(user_id)
+        
         processing_status[user_id] = {
-            'total': total, 'processed': 0, 'live': 0, 'dead': 0,
+            'total': total, 'processed': start_idx, 'live': live_count, 'dead': dead_count,
             'lock': threading.Lock(), 'current_url': '', 'current_respons': '',
-            'stop_flag': False, 'done': False, 'last_update': time.time()
+            'stop_flag': False, 'done': False
         }
         
-        status_msg = safe_send_message(chat_id, f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: 0\n❌ Dead: 0\n⏳ Progress: 0% ░░░░░░░░░░░░░░░░░░░░\nUrl : ...\nRespons : ...\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked 0 of {total}\n🛑 /stop to stop""")
+        status_msg = safe_send_message(chat_id, f"""📊 <b>Scanning...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total: {total}\n✅ Live: {live_count}\n❌ Dead: {dead_count}\n⏳ Progress: {int((start_idx/total)*100)}%\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {start_idx} of {total}\n🛑 /stop to stop""")
         
         if not status_msg:
             return
 
-        def update_status():
-            last_text = ""
-            last_edit_time = time.time()
-            min_edit_interval = 20
-            consecutive_errors = 0
-            
-            while True:
-                time.sleep(15)
-                try:
-                    if time.time() - last_edit_time < min_edit_interval:
-                        continue
-                    
-                    with processing_status[user_id]['lock']:
-                        if processing_status[user_id].get('done', False):
-                            break
-                        processed = processing_status[user_id]['processed']
-                        live = processing_status[user_id]['live']
-                        dead = processing_status[user_id]['dead']
-                        current_url = processing_status[user_id]['current_url']
-                        current_respons = processing_status[user_id]['current_respons']
-                        percent = int((processed / total) * 100) if total > 0 else 0
-                        bar_length = 20
-                        filled = int((percent / 100) * bar_length)
-                        bar = '█' * filled + '░' * (bar_length - filled)
-                        text = f"""📊 <b>File #1 - Scanning links...</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n⏳ Progress: {percent}% {bar}\nUrl : <code>{current_url[:60] if current_url else '...'}</code>\nRespons : <code>{current_respons[:60] if current_respons else '...'}</code>\n━━━━━━━━━━━━━━━━━━\n⏱️ Checked {processed} of {total}\n🛑 /stop to stop"""
-                        
-                        if text != last_text:
-                            try:
-                                bot.edit_message_text(text, chat_id, status_msg.message_id, parse_mode="HTML")
-                                last_text = text
-                                last_edit_time = time.time()
-                                consecutive_errors = 0
-                            except Exception as e:
-                                error_str = str(e)
-                                
-                                if "502" in error_str or "Bad Gateway" in error_str:
-                                    consecutive_errors += 1
-                                    print(f"⚠️ 502 in update_status - error #{consecutive_errors}")
-                                    if consecutive_errors > 5:
-                                        time.sleep(30)
-                                    else:
-                                        time.sleep(10)
-                                        
-                                elif "429" in error_str:
-                                    wait_time = 30
-                                    try:
-                                        wait_time = int(error_str.split("retry after ")[1].split(")")[0])
-                                    except:
-                                        pass
-                                    print(f"⏳ FloodWait in update_status: {wait_time}s")
-                                    time.sleep(min(wait_time, 60))
-                                    
-                                else:
-                                    pass
-                except:
-                    pass
-
-        updater = threading.Thread(target=update_status, daemon=True)
-        updater.start()
-
-        time.sleep(2)
-
-        for idx, link in enumerate(links):
+        for idx in range(start_idx, total):
             if processing_status[user_id].get('stop_flag', False):
+                print(f"🛑 توقف يدوي عند {idx}")
                 break
+            
+            link = links[idx]
             
             with processing_status[user_id]['lock']:
                 processing_status[user_id]['current_url'] = link
@@ -1323,30 +1283,40 @@ def process_mass_file(message):
             result = check_single_link(link)
             
             with processing_status[user_id]['lock']:
-                processing_status[user_id]['processed'] += 1
+                processing_status[user_id]['processed'] = idx + 1
+                
                 if result and result.get('live'):
-                    processing_status[user_id]['live'] += 1
-                    live_idx = processing_status[user_id]['live']
-                    processing_status[user_id]['current_respons'] = result['respons']
+                    live_idx = processing_status[user_id]['live'] + 1
                     
-                    try:
-                        code = generate_gateway_code(result)
-                        file_name = f'gateway_{live_idx}.py'
-                        with open(file_name, 'w', encoding='utf-8') as f:
-                            f.write(code)
+                    sent_ok = send_live_gateway(chat_id, result, live_idx)
+                    
+                    if sent_ok:
+                        processing_status[user_id]['live'] += 1
+                        processing_status[user_id]['current_respons'] = result['respons']
+                        print(f"✅ Live #{live_idx} اتبعت")
+                    else:
+                        result['idx'] = live_idx
+                        saved_live_links.append(result)
+                        save_live_links(user_id, saved_live_links)
                         
-                        safe_send_document(chat_id, file_name, caption=f"""✅ <b>Live Gateway #{live_idx}</b>\n━━━━━━━━━━━━━━━━━━━━\n🔗 Link: <code>{result['link']}</code>\n━━━━━━━━━━━━━━━━━━━━\n💬 <b>Respons:</b> <code>{result['respons']}</code>\n━━━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30""")
-                        
-                        try:
-                            os.remove(file_name)
-                        except:
-                            pass
-                        time.sleep(3)
-                    except Exception as e:
-                        print(f"Error sending file: {e}")
+                        processing_status[user_id]['live'] += 1
+                        processing_status[user_id]['current_respons'] = result['respons']
+                        print(f"💾 Live #{live_idx} محفوظ للإرسال لاحقاً")
+                    
+                    time.sleep(3)
+                    
                 else:
                     processing_status[user_id]['dead'] += 1
                     processing_status[user_id]['current_respons'] = result.get('respons', 'Dead') if result else 'Dead'
+                
+                if (idx + 1) % 5 == 0:
+                    progress_data = {
+                        'processed': idx + 1,
+                        'live': processing_status[user_id]['live'],
+                        'dead': processing_status[user_id]['dead'],
+                        'total': total
+                    }
+                    save_progress(user_id, progress_data)
             
             if idx % 10 == 0:
                 time.sleep(3)
@@ -1355,7 +1325,6 @@ def process_mass_file(message):
             
             if idx % 100 == 0 and idx > 0:
                 gc.collect()
-                print(f"✅ GC collected - Processed {idx} links")
         
         with processing_status[user_id]['lock']:
             processing_status[user_id]['done'] = True
@@ -1363,23 +1332,47 @@ def process_mass_file(message):
             live = processing_status[user_id]['live']
             dead = processing_status[user_id]['dead']
         
-        updater.join(timeout=5)
+        saved_live_links = load_live_links(user_id)
+        if saved_live_links:
+            print(f"📤 محاولة أخيرة لإرسال {len(saved_live_links)} روابط...")
+            
+            still_failed = []
+            for live_data in saved_live_links:
+                sent_ok = send_live_gateway(chat_id, live_data, live_data.get('idx', 'x'))
+                if not sent_ok:
+                    still_failed.append(live_data)
+            
+            if still_failed:
+                save_live_links(user_id, still_failed)
+            else:
+                delete_live_links(user_id)
         
-        final_text = f"""📊 <b>✅ Complete!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total Links: {total}\n✅ Live (Sent): {live}\n❌ Dead: {dead}\n💯 Success Rate: {int((live/total)*100) if total > 0 else 0}%\n━━━━━━━━━━━━━━━━━━\nDev: @FAWZY30"""
+        final_text = f"""📊 <b>✅ Complete!</b>\n━━━━━━━━━━━━━━━━━━\n📌 Total: {total}\n✅ Live: {live}\n❌ Dead: {dead}\n━━━━━━━━━━━━━━━━━━"""
         
         try:
             safe_edit_message(chat_id, status_msg.message_id, final_text)
         except:
             safe_send_message(chat_id, final_text)
         
+        delete_progress(user_id)
+        
         if user_id in processing_status:
             del processing_status[user_id]
             
     except Exception as e:
-        print(f"❌ Error in process_mass_file: {e}")
-        safe_send_message(message.chat.id, f"❌ Error: {str(e)[:100]}")
-        if 'user_id' in locals() and user_id in processing_status:
-            del processing_status[user_id]
+        print(f"❌ Error: {e}")
+        if 'user_id' in locals() and 'idx' in locals():
+            try:
+                progress_data = {
+                    'processed': idx,
+                    'live': processing_status.get(user_id, {}).get('live', 0),
+                    'dead': processing_status.get(user_id, {}).get('dead', 0),
+                    'total': total
+                }
+                save_progress(user_id, progress_data)
+                print(f"💾 تم حفظ التقدم عند {idx}")
+            except:
+                pass
 
 # ═══════════════════════ نظام الحظر ═══════════════════════
 
@@ -1431,12 +1424,12 @@ if __name__ == '__main__':
             error_str = str(e)
             
             if "502" in error_str or "Bad Gateway" in error_str:
-                print(f'⚠️ 502 Bad Gateway - Telegram server issue. Waiting 10s...')
+                print(f'⚠️ 502 Bad Gateway. Waiting 10s...')
                 time.sleep(10)
                 continue
                 
             elif "409" in error_str:
-                print(f'⚠️ 409 Conflict - Another instance running. Waiting 15s...')
+                print(f'⚠️ 409 Conflict. Waiting 15s...')
                 time.sleep(15)
                 continue
                 
@@ -1453,11 +1446,6 @@ if __name__ == '__main__':
             elif "Connection" in error_str or "ConnectionError" in error_str:
                 print(f'⚠️ Connection error. Retrying in 5s...')
                 time.sleep(5)
-                continue
-                
-            elif "500" in error_str or "Internal Server Error" in error_str:
-                print(f'⚠️ 500 Internal Server Error. Retrying in 10s...')
-                time.sleep(10)
                 continue
                 
             else:
